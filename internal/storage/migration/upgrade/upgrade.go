@@ -33,6 +33,7 @@ import (
 	"github.com/goposta/posta/internal/models"
 	"github.com/jkaninda/logger"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // Settings keys persisted in the platform `settings` table.
@@ -97,7 +98,7 @@ func runLocked(ctx context.Context, db *gorm.DB, binaryVersion string, opts Opti
 		return err
 	}
 
-	if !IsDev(binaryVersion) {
+	if fresh || !IsDev(binaryVersion) {
 		if err := writeVersion(db, binaryVersion); err != nil {
 			return fmt.Errorf("upgrade: persist version: %w", err)
 		}
@@ -165,5 +166,5 @@ func markAllApplied(db *gorm.DB, binaryVersion string) error {
 			AppliedAt:  now,
 		})
 	}
-	return db.Create(&rows).Error
+	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&rows).Error
 }
