@@ -1,25 +1,12 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package config
 
 import (
 	"crypto/tls"
 	"fmt"
+	"os"
 	"strings"
 
 	errorhandlers "github.com/goposta/posta/internal/error_handlers"
@@ -65,8 +52,7 @@ type Config struct {
 	// admins; it never upgrades anything and sends nothing about this install.
 	UpdateCheck bool
 
-	PlanEnforcement   bool
-	WorkspaceOnlyMode bool
+	PlanEnforcement bool
 
 	// WebDir overrides where the dashboard is served from. The UI is normally
 	// embedded in the binary (internal/web); setting POSTA_WEB_DIR serves it from
@@ -128,6 +114,17 @@ type Config struct {
 	InboundTLSKeyFile     string
 	InboundSMTPRateLimit  int // per-IP max sessions per window; 0 disables
 	InboundSMTPRateWindow int // rate-limit window in seconds
+
+	// Web form message settings
+	MessagesEnabled           bool
+	MessagesMaxBodyBytes      int64
+	MessagesMaxAttachSize     int64
+	MessagesIPRateLimit       int
+	MessagesIPRateWindow      int
+	MessagesPerFormHourly     int
+	MessagesPerEmailHourly    int
+	MessagesPerWorkspaceDaily int
+	MessagesInboundDomain     string
 
 	// SMTP Relay settings. No TLS by design.
 	SMTPRelayEnabled        bool
@@ -262,13 +259,12 @@ func New() *Config {
 		AllowDowngrade:             goutils.EnvBool("POSTA_ALLOW_DOWNGRADE", false),
 		securitySchemes:            okapi.SecuritySchemes{},
 
-		MetricsEnabled:    goutils.EnvBool("POSTA_METRICS_ENABLED", false),
-		UpdateCheck:       goutils.EnvBool("POSTA_UPDATE_CHECK", true),
-		PlanEnforcement:   goutils.EnvBool("POSTA_PLAN_ENFORCEMENT", false),
-		WorkspaceOnlyMode: goutils.EnvBool("POSTA_WORKSPACE_ONLY_MODE", false),
-		WebDir:            goutils.Env("POSTA_WEB_DIR", ""),
-		AppWebURL:         goutils.Env("POSTA_WEB_URL", ""),
-		ApiBaseURL:        goutils.Env("POSTA_API_URL", ""),
+		MetricsEnabled:  goutils.EnvBool("POSTA_METRICS_ENABLED", false),
+		UpdateCheck:     goutils.EnvBool("POSTA_UPDATE_CHECK", true),
+		PlanEnforcement: goutils.EnvBool("POSTA_PLAN_ENFORCEMENT", false),
+		WebDir:          goutils.Env("POSTA_WEB_DIR", ""),
+		AppWebURL:       goutils.Env("POSTA_WEB_URL", ""),
+		ApiBaseURL:      goutils.Env("POSTA_API_URL", ""),
 
 		CORSOrigins: goutils.Env("POSTA_CORS_ORIGINS", "*"),
 
@@ -321,6 +317,16 @@ func New() *Config {
 		InboundSMTPRateLimit:  goutils.EnvInt("POSTA_INBOUND_SMTP_RATE_LIMIT", 60),
 		InboundSMTPRateWindow: goutils.EnvInt("POSTA_INBOUND_SMTP_RATE_WINDOW", 60),
 
+		MessagesEnabled:           goutils.EnvBool("POSTA_MESSAGES_ENABLED", false),
+		MessagesMaxBodyBytes:      int64(goutils.EnvInt("POSTA_MESSAGES_MAX_BODY_BYTES", 65536)),
+		MessagesMaxAttachSize:     int64(goutils.EnvInt("POSTA_MESSAGES_MAX_ATTACH_SIZE", 5242880)),
+		MessagesIPRateLimit:       goutils.EnvInt("POSTA_MESSAGES_IP_RATE_LIMIT", 20),
+		MessagesIPRateWindow:      goutils.EnvInt("POSTA_MESSAGES_IP_RATE_WINDOW", 3600),
+		MessagesPerFormHourly:     goutils.EnvInt("POSTA_MESSAGES_PER_FORM_HOURLY", 200),
+		MessagesPerEmailHourly:    goutils.EnvInt("POSTA_MESSAGES_PER_EMAIL_HOURLY", 5),
+		MessagesPerWorkspaceDaily: goutils.EnvInt("POSTA_MESSAGES_PER_WORKSPACE_DAILY", 1000),
+		MessagesInboundDomain:     goutils.Env("POSTA_MESSAGES_INBOUND_DOMAIN", ""),
+
 		SMTPRelayEnabled:        goutils.EnvBool("POSTA_SMTP_RELAY_ENABLED", false),
 		SMTPRelayHost:           goutils.Env("POSTA_SMTP_RELAY_HOST", "0.0.0.0"),
 		SMTPRelayPort:           goutils.EnvInt("POSTA_SMTP_RELAY_PORT", 2526),
@@ -330,7 +336,26 @@ func New() *Config {
 		SMTPRelayRateWindow:     goutils.EnvInt("POSTA_SMTP_RELAY_RATE_WINDOW", 60),
 	}
 }
+
+// removedEnvVars are settings that no longer do anything. Setting one is not an
+// error, but it is worth telling the operator so they can clean up.
+var removedEnvVars = map[string]string{
+	"POSTA_WORKSPACE_ONLY_MODE": "every resource is workspace-scoped unconditionally; the flag no longer does anything",
+}
+
+func warnRemovedEnvVars() {
+	for name, why := range removedEnvVars {
+		if _, ok := os.LookupEnv(name); ok {
+			logger.Warn("ignoring removed setting", "variable", name, "reason", why)
+		}
+	}
+}
+
 func (c *Config) validate() error {
+	warnRemovedEnvVars()
+	if c.MessagesEnabled && c.MessagesInboundDomain != "" && !c.InboundEnabled {
+		return fmt.Errorf("POSTA_MESSAGES_INBOUND_DOMAIN requires POSTA_INBOUND_ENABLED=true")
+	}
 	if c.InboundEnabled && c.InboundTLSMode != "" && c.InboundTLSMode != "none" {
 		if c.InboundTLSMode != "starttls" {
 			return fmt.Errorf("unsupported POSTA_INBOUND_TLS_MODE %q (use none or starttls)", c.InboundTLSMode)
@@ -342,9 +367,8 @@ func (c *Config) validate() error {
 	return c.ValidateSecurity()
 }
 func (c *Config) validateWorker() error {
-	// The worker verifies the same JWTs the server issues, so it needs the same
-	// secret to be real.
-	return c.ValidateSecurity()
+	warnRemovedEnvVars()
+	return c.ValidateWorker()
 }
 func (c *Config) Initialize(app *okapi.Okapi) error {
 	if err := c.validate(); err != nil {
@@ -402,8 +426,8 @@ func (c *Config) Initialize(app *okapi.Okapi) error {
 			Description: "Self-hosted email delivery platform for developers and teams.",
 			Favicon:     "/favicon.png",
 			License: okapi.License{
-				Name: "Apache-2.0",
-				URL:  "http://www.apache.org/licenses/LICENSE-2.0",
+				Name: "AGPL-3.0-or-later",
+				URL:  "https://www.gnu.org/licenses/agpl-3.0.html",
 			},
 			Contact: okapi.Contact{
 				Name:  "Support",
@@ -422,11 +446,8 @@ func (c *Config) Initialize(app *okapi.Okapi) error {
 func (c *Config) InitWorker() error {
 	// Initialize global logger
 	c.initLogger()
-	c.WarnInsecureConfig()
-	if err := c.validateWorker(); err != nil {
-		return err
-	}
-	return nil
+	c.WarnInsecureWorkerConfig()
+	return c.validateWorker()
 }
 func (c *Config) initLogger() *logger.Logger {
 	if c.DevMode {

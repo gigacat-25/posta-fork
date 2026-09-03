@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package main
 
@@ -39,7 +25,9 @@ import (
 
 func runWorker() error {
 	cfg := config.New()
-	_ = cfg.InitWorker()
+	if err := cfg.InitWorker(); err != nil {
+		logger.Fatal("worker configuration is not usable", "error", err)
+	}
 	cfg.InitStorage()
 
 	db := cfg.Database.DB
@@ -155,6 +143,7 @@ func runWorker() error {
 		repositories.NewUserSettingRepository(db),
 		repositories.NewWorkspaceRepository(db),
 	)
+	notifier.SetSMTPRepo(repositories.NewSMTPRepository(db))
 	dailyReportHandler := worker.NewDailyReportHandler(
 		notifier,
 		repositories.NewAnalyticsRepository(db),
@@ -200,6 +189,19 @@ func runWorker() error {
 			parseProducer,
 		)
 		mux.HandleFunc(worker.TypeInboundParse, parseHandler.ProcessTask)
+	}
+
+	if cfg.MessagesEnabled {
+		messageHandler := worker.NewMessageProcessHandler(
+			repositories.NewMessageRepository(db),
+			repositories.NewFormRepository(db),
+			repositories.NewWorkspaceRepository(db),
+			newWebhookDispatcher(db, cfg),
+			notifier,
+			cfg.AppWebURL,
+		)
+		messageHandler.OnNotified(metrics.IncrementMessageNotification)
+		mux.HandleFunc(worker.TypeMessageProcess, messageHandler.ProcessTask)
 	}
 
 	// Publish worker's build info

@@ -1,21 +1,7 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
-package workspacemigrate
+package workspaceprovision
 
 import (
 	"fmt"
@@ -24,12 +10,27 @@ import (
 	"github.com/goposta/posta/internal/models"
 )
 
-func TestPersonalSlugIsStableAndUnique(t *testing.T) {
-	if got := personalSlug(42); got != "personal-42" {
-		t.Fatalf("personalSlug(42) = %q, want %q", got, "personal-42")
+func TestWorkspaceSlugIsStableAndUnique(t *testing.T) {
+	if got := workspaceSlug(42); got != "workspace-42" {
+		t.Fatalf("workspaceSlug(42) = %q, want %q", got, "workspace-42")
 	}
-	if personalSlug(1) == personalSlug(2) {
-		t.Fatal("personalSlug must differ per user")
+	if workspaceSlug(1) == workspaceSlug(2) {
+		t.Fatal("workspaceSlug must differ per user")
+	}
+}
+
+func TestWorkspaceName(t *testing.T) {
+	cases := map[string]string{
+		"Jonas Kaninda": "Jonas's workspace",
+		"Ada":           "Ada's workspace",
+		"  Grace  ":     "Grace's workspace",
+		"":              "My workspace",
+		"   ":           "My workspace",
+	}
+	for in, want := range cases {
+		if got := workspaceName(in); got != want {
+			t.Fatalf("workspaceName(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

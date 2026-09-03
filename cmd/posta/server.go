@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package main
 
@@ -44,7 +30,8 @@ import (
 	"github.com/goposta/posta/internal/services/updatecheck"
 	"github.com/goposta/posta/internal/services/webhook"
 	"github.com/goposta/posta/internal/services/workermon"
-	"github.com/goposta/posta/internal/services/workspacemigrate"
+	workspacesvc "github.com/goposta/posta/internal/services/workspace"
+	"github.com/goposta/posta/internal/services/workspaceprovision"
 	"github.com/goposta/posta/internal/storage"
 	"github.com/goposta/posta/internal/storage/blob"
 	"github.com/goposta/posta/internal/storage/migration"
@@ -104,6 +91,16 @@ func runServer(cli *okapicli.CLI) {
 
 			seedDefaults(res.db, cfg)
 
+			if ws, err := workspacesvc.EnsureSystem(res.db, cfg.SystemSMTP); err != nil {
+				logger.Error("failed to ensure the system workspace", "error", err)
+			} else {
+
+				seedWorkspace(res.db, ws.ID, ws.OwnerID)
+				if err := workspacesvc.SyncMembers(res.db); err != nil {
+					logger.Error("failed to sync system workspace members", "error", err)
+				}
+			}
+
 			// Initialize blob storage (S3 or filesystem) for attachments
 			if cfg.BlobProvider != "" {
 				bs, err := blob.New(blob.Config{
@@ -135,6 +132,7 @@ func runServer(cli *okapicli.CLI) {
 				userRepo,
 				userSettingRepo,
 				repositories.NewWorkspaceRepository(res.db))
+			notifier.SetSMTPRepo(repositories.NewSMTPRepository(res.db))
 			if notifier.IsConfigured() {
 				logger.Info("system notification service enabled")
 			}
@@ -215,22 +213,36 @@ func checkDefaultPlan(db *gorm.DB, cfg *config.Config) {
 	}
 }
 
-func seedDefaults(db *gorm.DB, cfg *config.Config) {
-	userRepo := repositories.NewUserRepository(db)
-	admin, err := userRepo.FindByEmail(cfg.AdminEmail)
-	if err != nil || admin == nil {
-		return
-	}
-	s := seeder.New(
+// newSeeder builds the default-content seeder. Cheap to construct: it holds
+// repositories and no state, so callers make one rather than threading it.
+func newSeeder(db *gorm.DB) *seeder.Seeder {
+	return seeder.New(
 		repositories.NewTemplateRepository(db),
 		repositories.NewStyleSheetRepository(db),
 		repositories.NewTemplateVersionRepository(db),
 		repositories.NewTemplateLocalizationRepository(db),
 		repositories.NewLanguageRepository(db),
 	)
-	migrator := workspacemigrate.New(cfg.PlanEnforcement)
+}
+
+func seedWorkspace(db *gorm.DB, workspaceID, ownerID uint) {
+	ownerName := ""
+	if owner, err := repositories.NewUserRepository(db).FindByID(ownerID); err == nil && owner != nil {
+		ownerName = owner.Name
+	}
+	newSeeder(db).SeedWorkspaceDefaults(workspaceID, ownerID, ownerName)
+}
+
+func seedDefaults(db *gorm.DB, cfg *config.Config) {
+	userRepo := repositories.NewUserRepository(db)
+	admin, err := userRepo.FindByEmail(cfg.AdminEmail)
+	if err != nil || admin == nil {
+		return
+	}
+	s := newSeeder(db)
+	migrator := workspaceprovision.New(cfg.PlanEnforcement)
 	migrator.SetSeeder(s)
-	if _, err := migrator.MigrateUser(db, admin.ID); err != nil {
+	if _, err := migrator.EnsureWorkspace(db, admin.ID); err != nil {
 		logger.Error("failed to provision admin personal workspace", "error", err)
 	}
 }
@@ -484,6 +496,19 @@ func startEmbeddedWorker(db *gorm.DB,
 		mux.HandleFunc(worker.TypeInboundParse, parseHandler.ProcessTask)
 	}
 
+	if cfg.MessagesEnabled {
+		messageHandler := worker.NewMessageProcessHandler(
+			repositories.NewMessageRepository(db),
+			repositories.NewFormRepository(db),
+			repositories.NewWorkspaceRepository(db),
+			newWebhookDispatcher(db, cfg),
+			notifier,
+			cfg.AppWebURL,
+		)
+		messageHandler.OnNotified(metrics.IncrementMessageNotification)
+		mux.HandleFunc(worker.TypeMessageProcess, messageHandler.ProcessTask)
+	}
+
 	workermon.StartHeartbeat(context.Background(), cfg.Redis.Client, config.Version, config.CommitID)
 
 	go func() {
@@ -550,6 +575,16 @@ func initCronManager(
 			repositories.NewCampaignRepository(db),
 			repositories.NewCampaignMessageRepository(db),
 			producer,
+		))
+	}
+	if cfg.MessagesEnabled {
+		retentionJob.SetMessageRepo(repositories.NewMessageRepository(db))
+		manager.Register(jobs.NewMessageDigestJob(
+			notifier,
+			repositories.NewFormRepository(db),
+			repositories.NewMessageRepository(db),
+			repositories.NewWorkspaceRepository(db),
+			cfg.AppWebURL,
 		))
 	}
 	return manager

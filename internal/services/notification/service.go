@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package notification
 
@@ -48,13 +34,17 @@ const (
 	TemplateLoginAlert      = "login_alert"
 	TemplateTwoFactorChange = "two_factor_changed"
 	TemplateAccountDeletion = "account_deletion"
+	TemplateNewMessage      = "new_message"
+	TemplateMessageDigest   = "message_digest"
 )
 
 var templatePreference = map[string]func(*models.UserSetting) bool{
-	TemplateDailyReport:  func(s *models.UserSetting) bool { return s.DailyReport },
-	TemplateBounceAlert:  func(s *models.UserSetting) bool { return s.NotifyBounceAlerts },
-	TemplateAPIKeyExpiry: func(s *models.UserSetting) bool { return s.NotifyAPIKeyExpiry },
-	TemplateRoleChanged:  func(s *models.UserSetting) bool { return s.NotifyWorkspaceActivity },
+	TemplateDailyReport:   func(s *models.UserSetting) bool { return s.DailyReport },
+	TemplateBounceAlert:   func(s *models.UserSetting) bool { return s.NotifyBounceAlerts },
+	TemplateAPIKeyExpiry:  func(s *models.UserSetting) bool { return s.NotifyAPIKeyExpiry },
+	TemplateRoleChanged:   func(s *models.UserSetting) bool { return s.NotifyWorkspaceActivity },
+	TemplateNewMessage:    func(s *models.UserSetting) bool { return s.NotifyNewMessage },
+	TemplateMessageDigest: func(s *models.UserSetting) bool { return s.NotifyNewMessage },
 }
 
 func templateEnabled(templateName string, settings *models.UserSetting) bool {
@@ -73,6 +63,7 @@ type Service struct {
 	userRepo        *repositories.UserRepository
 	userSettingRepo *repositories.UserSettingRepository
 	workspaceRepo   *repositories.WorkspaceRepository
+	smtpRepo        *repositories.SMTPRepository
 	templates       map[string]*template.Template
 }
 
@@ -113,6 +104,8 @@ func (s *Service) loadTemplates() {
 		TemplateLoginAlert,
 		TemplateTwoFactorChange,
 		TemplateAccountDeletion,
+		TemplateNewMessage,
+		TemplateMessageDigest,
 	}
 	for _, name := range names {
 		tmpl := template.Must(template.ParseFS(templateFS,
@@ -263,7 +256,19 @@ func (s *Service) render(templateName string, data map[string]any) (string, erro
 	return buf.String(), nil
 }
 
+// systemServer resolves the connection the platform sends its own mail through.
+//
+// The row provisioned into the system workspace from POSTA_SYSTEM_SMTP_* is
+// preferred, so what an operator sees in the dashboard is what the platform
+// actually uses. Configuration remains the fallback: the worker binary builds
+// this service without a repository, and on a first boot the row does not exist
+// until provisioning has run.
 func (s *Service) systemServer() *models.SMTPServer {
+	if s.smtpRepo != nil {
+		if server, err := s.smtpRepo.FindSystem(); err == nil && server.Host != "" {
+			return server
+		}
+	}
 	return &models.SMTPServer{
 		Host:       s.smtpCfg.Host,
 		Port:       s.smtpCfg.Port,
@@ -272,3 +277,7 @@ func (s *Service) systemServer() *models.SMTPServer {
 		Encryption: s.smtpCfg.Encryption,
 	}
 }
+
+// SetSMTPRepo lets the service read the provisioned system SMTP server. Without
+// it the service still works, sending straight from configuration.
+func (s *Service) SetSMTPRepo(repo *repositories.SMTPRepository) { s.smtpRepo = repo }

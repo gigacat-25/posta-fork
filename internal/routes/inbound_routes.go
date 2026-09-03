@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package routes
 
@@ -29,7 +15,7 @@ import (
 // Protected by opaque secret/token — no JWT.
 func (r *Router) inboundWebhookRoutes() []okapi.RouteDefinition {
 	inboundGroup := r.app.Group("/api/v1/inbound").WithTagInfo(okapi.GroupTag{
-		Name:        "Inbound",
+		Name:        tagInbound,
 		Description: "Inbound email ingestion and retrieval: receive messages from upstream providers, browse history, and stream live events.",
 	})
 	return []okapi.RouteDefinition{
@@ -58,7 +44,7 @@ func (r *Router) inboundWorkspaceRoutes() []okapi.RouteDefinition {
 	// header, but it does send the session cookie, which r.mw.auth reads. Machine
 	// clients may stream with an API key via `?token=psk_…`.
 	userGroup := r.v1.Group("/workspaces/current", r.mw.auth, r.mw.workspaceQuery).WithTagInfo(okapi.GroupTag{
-		Name:        "Inbound",
+		Name:        tagInbound,
 		Description: "Inbound email ingestion and retrieval: receive messages from upstream providers, browse history, and stream live events. Public ingest endpoints use opaque secrets; user endpoints use a dashboard session or an API key.",
 	})
 	userGroup.WithBearerAuth()

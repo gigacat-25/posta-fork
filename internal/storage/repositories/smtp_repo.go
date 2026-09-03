@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package repositories
 
@@ -117,6 +103,20 @@ func (r *SMTPRepository) FindByScope(scope ResourceScope, limit, offset int) ([]
 func (r *SMTPRepository) FindFirstByWorkspaceID(workspaceID uint) (*models.SMTPServer, error) {
 	var server models.SMTPServer
 	if err := r.db.Where("workspace_id = ? AND status = ?", workspaceID, models.SMTPStatusEnabled).First(&server).Error; err != nil {
+		return nil, err
+	}
+	return &server, nil
+}
+
+// FindSystem returns the server provisioned from POSTA_SYSTEM_SMTP_*.
+//
+// Status is deliberately not filtered: the platform's own mail is password
+// resets and security alerts, and a dashboard toggle must not be able to lock
+// an operator out of their installation. Whether the platform sends at all is
+// governed by whether POSTA_SYSTEM_SMTP_* is configured.
+func (r *SMTPRepository) FindSystem() (*models.SMTPServer, error) {
+	var server models.SMTPServer
+	if err := r.db.Where("is_system = ?", true).Order("id").First(&server).Error; err != nil {
 		return nil, err
 	}
 	return &server, nil

@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package metrics
 
@@ -27,13 +13,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// labelStatus is the Prometheus label shared by the request, email, and
+// message counters.
+const labelStatus = "status"
+
 var (
 	httpRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "posta_http_requests_total",
 			Help: "Total number of HTTP requests",
 		},
-		[]string{"method", "path", "status"},
+		[]string{"method", "path", labelStatus},
 	)
 
 	httpRequestDuration = prometheus.NewHistogramVec(
@@ -78,7 +68,7 @@ var (
 			Name: "posta_webhook_deliveries_total",
 			Help: "Total number of webhook delivery attempts by status",
 		},
-		[]string{"status"},
+		[]string{labelStatus},
 	)
 
 	webhookDeliveryDuration = prometheus.NewHistogram(
@@ -110,6 +100,21 @@ var (
 			Help: "Total number of inbound messages accepted for processing, by source",
 		},
 		[]string{"source"},
+	)
+
+	messagesReceivedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "posta_form_messages_received_total",
+			Help: "Total number of web form messages stored, by scan status",
+		},
+		[]string{labelStatus},
+	)
+
+	messageNotificationsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "posta_form_message_notifications_total",
+			Help: "Total number of web form message notifications delivered",
+		},
 	)
 
 	inboundForwardedTotal = prometheus.NewCounter(
@@ -174,6 +179,8 @@ func init() {
 	prometheus.MustRegister(inboundRejectedTotal)
 	prometheus.MustRegister(inboundBytesTotal)
 	prometheus.MustRegister(inboundIngestDuration)
+	prometheus.MustRegister(messagesReceivedTotal)
+	prometheus.MustRegister(messageNotificationsTotal)
 	prometheus.MustRegister(activeWorkers)
 }
 
@@ -221,6 +228,16 @@ func IncrementBounce(bounceType string) {
 // IncrementSuppression increments the suppression counter.
 func IncrementSuppression() {
 	suppressionsTotal.Inc()
+}
+
+// IncrementMessageReceived increments the web form message counter for the given scan status.
+func IncrementMessageReceived(status string) {
+	messagesReceivedTotal.WithLabelValues(status).Inc()
+}
+
+// IncrementMessageNotification increments the web form notification counter.
+func IncrementMessageNotification() {
+	messageNotificationsTotal.Inc()
 }
 
 // IncrementInboundReceived increments the inbound received counter for the given source.

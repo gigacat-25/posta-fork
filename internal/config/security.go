@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package config
 
@@ -78,15 +64,18 @@ type secretProblem struct {
 	fatal  bool
 }
 
+// envJWTSecret names the setting these checks report on.
+const envJWTSecret = "POSTA_JWT_SECRET"
+
 func (c *Config) jwtSecretProblem() *secretProblem {
 	switch {
 	case strings.TrimSpace(c.JWTSecret) == "":
-		return &secretProblem{"POSTA_JWT_SECRET", "is empty", true}
+		return &secretProblem{envJWTSecret, "is empty", true}
 	case isPlaceholder(c.JWTSecret):
-		return &secretProblem{"POSTA_JWT_SECRET", "is the published placeholder value, so sessions can be forged by anyone", true}
+		return &secretProblem{envJWTSecret, "is the published placeholder value, so sessions can be forged by anyone", true}
 	case len(c.JWTSecret) < MinJWTSecretLength:
 		return &secretProblem{
-			"POSTA_JWT_SECRET",
+			envJWTSecret,
 			fmt.Sprintf("is shorter than the recommended %d characters and may be brute-forced offline from a captured token", MinJWTSecretLength),
 			false,
 		}
@@ -108,15 +97,17 @@ func (c *Config) adminPasswordProblem() *secretProblem {
 	return nil
 }
 
-// securityProblems collects every unacceptable value in one pass so an operator
-// fixing their configuration sees the whole list rather than one item per boot.
-func (c *Config) securityProblems() []secretProblem {
+// sharedSecretProblems are the values both binaries depend on.
+//
+// The worker signs tracking links and stamps outgoing mail with the same JWT
+// secret the server uses, and it is the process that decrypts a stored SMTP
+// password at send time. A worker configured differently from its server does
+// not fail loudly; it produces links the server rejects and credentials it
+// cannot read.
+func (c *Config) sharedSecretProblems() []secretProblem {
 	var problems []secretProblem
 
 	if p := c.jwtSecretProblem(); p != nil {
-		problems = append(problems, *p)
-	}
-	if p := c.adminPasswordProblem(); p != nil {
 		problems = append(problems, *p)
 	}
 	if strings.TrimSpace(c.EncryptionKey) == "" {
@@ -126,6 +117,19 @@ func (c *Config) securityProblems() []secretProblem {
 			false,
 		})
 	}
+	return problems
+}
+
+// securityProblems collects every unacceptable value in one pass so an operator
+// fixing their configuration sees the whole list rather than one item per boot.
+// This is the server's set: it includes the values only a process serving HTTP
+// and seeding the first admin can act on.
+func (c *Config) securityProblems() []secretProblem {
+	problems := c.sharedSecretProblems()
+
+	if p := c.adminPasswordProblem(); p != nil {
+		problems = append(problems, *p)
+	}
 	if strings.TrimSpace(c.CORSOrigins) == "*" {
 		problems = append(problems, secretProblem{
 			"POSTA_CORS_ORIGINS",
@@ -133,8 +137,86 @@ func (c *Config) securityProblems() []secretProblem {
 			false,
 		})
 	}
+	if c.MessagesEnabled && c.MessagesIPRateLimit <= 0 {
+		problems = append(problems, secretProblem{
+			"POSTA_MESSAGES_IP_RATE_LIMIT",
+			"is disabled while public form ingest is enabled, leaving the endpoint open to flooding",
+			false,
+		})
+	}
 
 	return problems
+}
+
+// workerProblems is the worker's set. It drops the checks the worker cannot
+// act on — it seeds no admin, serves no HTTP, and exposes no form endpoint —
+// and adds the ones that decide whether it will do any work at all.
+func (c *Config) workerProblems() []secretProblem {
+	problems := c.sharedSecretProblems()
+
+	if c.Redis.Addr == "" && c.Redis.URL == "" {
+		problems = append(problems, secretProblem{
+			"POSTA_REDIS_ADDR",
+			"is empty, so the worker has no queue to consume and will process nothing",
+			true,
+		})
+	}
+	if c.WorkerConcurrency <= 0 {
+		problems = append(problems, secretProblem{
+			"POSTA_WORKER_CONCURRENCY",
+			fmt.Sprintf("is %d, so the worker would start and process nothing", c.WorkerConcurrency),
+			true,
+		})
+	}
+	if c.WorkerMaxRetries < 0 {
+		problems = append(problems, secretProblem{
+			"POSTA_WORKER_MAX_RETRIES",
+			fmt.Sprintf("is %d; it cannot be negative", c.WorkerMaxRetries),
+			true,
+		})
+	}
+	if c.MessagesEnabled && !c.SystemSMTP.IsConfigured() {
+		problems = append(problems, secretProblem{
+			"POSTA_SYSTEM_SMTP_HOST",
+			"is unset while web form messages are enabled, so the worker cannot deliver the notification for a submission",
+			false,
+		})
+	}
+	return problems
+}
+
+// ValidateWorker refuses to start a production worker whose configuration
+// contains a fatal problem, and reports the rest. The two fatal worker checks
+// are fatal everywhere, not only in production: a worker with no queue or no
+// concurrency is not a degraded worker, it is a process that looks healthy and
+// silently does nothing.
+func (c *Config) ValidateWorker() error {
+	for _, p := range c.workerProblems() {
+		if !p.fatal {
+			continue
+		}
+		if p.envVar == envJWTSecret && !c.IsProduction() {
+			continue
+		}
+		return fmt.Errorf("%s %s", p.envVar, p.reason)
+	}
+	return nil
+}
+
+// WarnInsecureWorkerConfig logs the worker's advisory problems once the logger
+// exists, mirroring WarnInsecureConfig for the server.
+func (c *Config) WarnInsecureWorkerConfig() {
+	for _, p := range c.workerProblems() {
+		if p.fatal && c.IsProduction() {
+			continue
+		}
+		msg := p.envVar + " " + p.reason
+		if p.fatal {
+			logger.Warn("worker configuration: "+msg, "env", p.envVar)
+			continue
+		}
+		logger.Warn("worker configuration: "+msg, "env", p.envVar)
+	}
 }
 
 // ValidateSecurity refuses to start a production deployment whose configuration

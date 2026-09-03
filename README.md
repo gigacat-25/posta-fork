@@ -7,6 +7,17 @@
 <p align="center">
   Self-hosted email delivery & inbound platform for developers and teams
 </p>
+<p align="center">
+  <a href="#overview">Overview</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#core-features">Features</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#api-documentation">API</a> ·
+  <a href="#dashboard">Dashboard</a> ·
+  <a href="#official-sdks">SDKs</a> ·
+  <a href="https://app.goposta.dev/">Live Demo</a> ·
+  <a href="https://docs.goposta.dev/">Docs</a>
+</p>
 
 [![CI](https://github.com/goposta/posta/actions/workflows/ci.yml/badge.svg)](https://github.com/goposta/posta/actions/workflows/ci.yml)
 [![Go](https://img.shields.io/github/go-mod/go-version/goposta/posta)](https://go.dev/)
@@ -14,7 +25,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/goposta/posta)](https://github.com/goposta/posta/releases)
 ![Docker Image Size (latest by date)](https://img.shields.io/docker/image-size/jkaninda/posta?style=flat-square)
 ![Docker Pulls](https://img.shields.io/docker/pulls/jkaninda/posta?style=flat-square)
-[![Deploy on Miabi](https://miabi.io/badge.svg?style=flat-square&label=deploy&color=dark)](https://marketplace.miabi.io/templates/posta)
+[![Deploy on Miabi](https://miabi.io/badge.svg?style=flat-square&label=deploy)](https://marketplace.miabi.io/templates/posta)
 
 
 
@@ -185,6 +196,57 @@ Response:
 
 ## Architecture
 
+Posta ships as a single binary that runs in two modes: `posta` serves the HTTP API,
+dashboard, and SMTP listeners; `posta worker` consumes the job queue. Both modes are
+stateless — all state lives in the shared PostgreSQL, Redis, and object storage — so you
+can run as many workers as your send volume needs.
+
+```mermaid
+flowchart LR
+    App["Your app<br/>REST API / SMTP client"]
+    MX["Inbound mail<br/>MX delivery"]
+
+    subgraph posta["Posta"]
+        Server["<b>posta</b><br/>HTTP API :9000 · Dashboard<br/>Inbound SMTP :2525 · Relay :2526"]
+        W1["<b>worker 1</b><br/>asynq consumer"]
+        W2["<b>worker 2</b><br/>asynq consumer"]
+    end
+
+    subgraph shared["Shared state"]
+        Redis[("Redis<br/>Asynq queues<br/>+ scheduler")]
+        PG[("PostgreSQL<br/>emails · templates<br/>contacts · logs")]
+        Blob[("Object storage<br/>S3-compatible or filesystem<br/>attachments · raw inbound")]
+    end
+
+    Providers["SMTP providers<br/>outbound delivery"]
+    Hooks["Your webhook<br/>endpoints"]
+
+    App --> Server
+    MX --> Server
+    Server -- enqueue --> Redis
+    Redis -- dequeue --> W1
+    Redis -- dequeue --> W2
+    Server <--> PG
+    W1 <--> PG
+    W2 <--> PG
+    Server -.-> Blob
+    W1 & W2 -.-> Blob
+    W1 & W2 --> Providers
+    W1 & W2 --> Hooks
+```
+
+Running the API without a dedicated worker works for evaluation, but production
+deployments should split them so sending, retries, campaigns, and scheduled jobs scale
+independently of request traffic — see
+[`examples/docker-compose-full.yml`](examples/docker-compose-full.yml).
+
+Object storage is optional (dashed above). With `POSTA_BLOB_PROVIDER` unset, attachments
+and raw inbound messages stay in the database; point it at `s3` or `fs` to move them out.
+Any multi-node deployment should use `s3` — a local `fs` path is not shared between the
+server and its workers.
+
+### Stack
+
 * Backend: Go (Okapi framework)
 * Frontend: Vue 3 + Vite
 * Database: PostgreSQL
@@ -295,7 +357,7 @@ Posta is available in the **[Miabi Marketplace](https://marketplace.miabi.io/tem
 [![Deploy on Miabi](https://miabi.io/badges/deploy-on-miabi-purple.svg)](https://marketplace.miabi.io/templates/posta)
 
 
-This is still self-hosted Posta — your own instance, your data, the same Apache 2.0 build. You just skip the setup: no Docker Compose to write, no services to wire together. Miabi deploys and manages it for you.
+This is still self-hosted Posta — your own instance, your data, the same AGPL-3.0 build. You just skip the setup: no Docker Compose to write, no services to wire together. Miabi deploys and manages it for you.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/goposta/posta/main/docs/static/img/screenshots/miabi-posta.png" alt="Posta in the Miabi Marketplace" width="900" />
@@ -332,8 +394,11 @@ Contributions are welcome. Please open an issue before submitting a pull request
 
 ## License
 
-Apache License 2.0
+Posta is free and open-source software licensed under the
+GNU Affero General Public License v3.0 or later ([AGPL-3.0-or-later](LICENSE)).
+
+Commercial support and hosted Posta services may be offered separately.
 
 ## Copyright
 
-Copyright (c) 2026 Jonas Kaninda
+Copyright (c) 2026 Jonas Kaninda and contributors

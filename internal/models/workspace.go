@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package models
 
@@ -37,16 +23,19 @@ const (
 )
 
 type Workspace struct {
-	ID              uint      `json:"id" gorm:"primaryKey"`
-	Name            string    `json:"name" gorm:"not null"`
-	Slug            string    `json:"slug" gorm:"uniqueIndex;not null"`
-	Description     string    `json:"description"`
-	OwnerID         uint      `json:"owner_id" gorm:"index;not null"`
-	PlanID          *uint     `json:"plan_id" gorm:"index"`
-	DefaultLanguage string    `json:"default_language" gorm:"size:10;default:'en'"`
-	IsPersonal      bool      `json:"is_personal" gorm:"not null;default:false"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              uint   `json:"id" gorm:"primaryKey"`
+	Name            string `json:"name" gorm:"not null"`
+	Slug            string `json:"slug" gorm:"uniqueIndex;not null"`
+	Description     string `json:"description"`
+	OwnerID         uint   `json:"owner_id" gorm:"index;not null"`
+	PlanID          *uint  `json:"plan_id" gorm:"index"`
+	DefaultLanguage string `json:"default_language" gorm:"size:10;default:'en'"`
+	// System marks the single built-in platform workspace. It owns
+	// platform-managed resources, is created on first boot, cannot be renamed or
+	// deleted, and admits only platform admins.
+	System    bool      `json:"system" gorm:"not null;default:false"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 
 	Owner   User              `json:"-" gorm:"foreignKey:OwnerID"`
 	Plan    Plan              `json:"-" gorm:"foreignKey:PlanID"`
@@ -78,6 +67,9 @@ type WorkspaceInvitation struct {
 	Workspace Workspace `json:"-" gorm:"foreignKey:WorkspaceID"`
 	Inviter   User      `json:"-" gorm:"foreignKey:InvitedBy"`
 }
+
+// IsSystem reports whether this is the built-in platform workspace.
+func (w *Workspace) IsSystem() bool { return w.System }
 
 // CanManageMembers returns true if the role can invite/remove members.
 func (r WorkspaceRole) CanManageMembers() bool {

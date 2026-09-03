@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package routes
 
@@ -34,6 +20,7 @@ import (
 	"github.com/goposta/posta/internal/services/emailverify"
 	"github.com/goposta/posta/internal/services/eventbus"
 	"github.com/goposta/posta/internal/services/inbound"
+	"github.com/goposta/posta/internal/services/messages"
 	"github.com/goposta/posta/internal/services/notification"
 	"github.com/goposta/posta/internal/services/passwordreset"
 	planpkg "github.com/goposta/posta/internal/services/plan"
@@ -47,7 +34,7 @@ import (
 	"github.com/goposta/posta/internal/services/verifier"
 	"github.com/goposta/posta/internal/services/webhook"
 	"github.com/goposta/posta/internal/services/workermon"
-	"github.com/goposta/posta/internal/services/workspacemigrate"
+	"github.com/goposta/posta/internal/services/workspaceprovision"
 	"github.com/goposta/posta/internal/storage/blob"
 	"github.com/goposta/posta/internal/storage/repositories"
 	"github.com/goposta/posta/internal/web"
@@ -127,11 +114,13 @@ type routerHandlers struct {
 	inbound          *handlers.InboundHandler
 	smtpCredential   *handlers.SMTPCredentialHandler
 	verify           *handlers.VerifyHandler
+	form             *handlers.FormHandler
+	message          *handlers.MessageHandler
+	messageFilter    *handlers.MessageFilterHandler
+	formIngest       *handlers.FormIngestHandler
 }
 
 func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *config.Config, producer *worker.Producer, cronManager *cronpkg.Manager, blobStore blob.Store, ctx context.Context, notifier ...*notification.Service) *email.Service {
-
-	repositories.SetWorkspaceOnlyMode(cfg.WorkspaceOnlyMode)
 
 	// Repositories
 	userRepo := repositories.NewUserRepository(db)
@@ -212,7 +201,7 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 	// Handlers
 	userSeeder := seeder.New(templateRepo, stylesheetRepo, versionRepo, localizationRepo, languageRepo)
 
-	migrator := workspacemigrate.New(cfg.PlanEnforcement)
+	migrator := workspaceprovision.New(cfg.PlanEnforcement)
 	migrator.SetSeeder(userSeeder)
 	userHandler := handlers.NewUserHandler(userRepo, cfg.JWTSecret, userSeeder, bus)
 	userHandler.SetSettings(settingsProvider)
@@ -288,6 +277,7 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 	// Plans
 	r.h.plan = handlers.NewPlanHandler(planRepo, workspaceRepo, userRepo, planService, auditLogger)
 	r.h.admin.SetWorkspaceRepo(workspaceRepo, planRepo)
+	r.h.workspace.SetSeeder(userSeeder)
 	r.h.workspace.SetPlanService(planService)
 	r.h.workspace.SetAuditLogger(auditLogger)
 	r.h.apiKey.SetQuota(planService, db)
@@ -311,6 +301,12 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 	// Self-service password reset (gated by the password_reset_enabled setting)
 	passwordResetSvc := passwordreset.NewService(userRepo, repositories.NewPasswordResetRepository(db), notif, cfg.AppWebURL)
 	r.h.user.SetPasswordReset(passwordResetSvc)
+
+	r.h.dashboard.SetFeatures(handlers.DashboardFeatures{
+		Messages: cfg.MessagesEnabled,
+		Inbound:  cfg.InboundEnabled,
+		Relay:    cfg.SMTPRelayEnabled,
+	})
 
 	// Email content privacy
 	r.h.email.SetSettings(settingsProvider)
@@ -400,6 +396,53 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 			r.h.inbound.SetEnqueuer(producer)
 		}
 		r.h.inbound.SetEventBus(bus)
+	}
+
+	// Web form messages
+	if cfg.MessagesEnabled {
+		formRepo := repositories.NewFormRepository(db)
+		messageRepo := repositories.NewMessageRepository(db)
+		messageFilterRepo := repositories.NewMessageFilterRepository(db)
+
+		messageSvc := messages.NewService(
+			formRepo, messageRepo, messageFilterRepo, suppressionRepo, redisClient,
+			messages.Config{
+				PerIPHourly:       cfg.MessagesIPRateLimit,
+				PerFormHourly:     cfg.MessagesPerFormHourly,
+				PerEmailHourly:    cfg.MessagesPerEmailHourly,
+				PerWorkspaceDaily: cfg.MessagesPerWorkspaceDaily,
+				MaxBodyBytes:      cfg.MessagesMaxBodyBytes,
+				MaxAttachmentSize: cfg.MessagesMaxAttachSize,
+				InboundDomain:     cfg.MessagesInboundDomain,
+				AppWebURL:         cfg.AppWebURL,
+			},
+			[]byte(cfg.JWTSecret),
+		)
+		messageSvc.SetEmailService(emailService)
+		messageSvc.SetEventBus(bus)
+		if producer != nil {
+			messageSvc.SetEnqueuer(producer)
+		}
+		if blobStore != nil {
+			messageSvc.SetBlobStore(blobStore)
+		}
+		messageSvc.OnReceived(func(status models.MessageStatus) {
+			metrics.IncrementMessageReceived(string(status))
+		})
+
+		r.h.form = handlers.NewFormHandler(formRepo, messageRepo, domainRepo, auditLogger, cfg.ApiBaseURL)
+		r.h.message = handlers.NewMessageHandler(messageRepo, formRepo, messageFilterRepo, messageSvc, auditLogger)
+		r.h.message.SetEventBus(bus)
+		r.h.messageFilter = handlers.NewMessageFilterHandler(messageFilterRepo, messageRepo, formRepo, messageSvc.Scanner())
+		r.h.formIngest = handlers.NewFormIngestHandler(
+			messageSvc,
+			inbound.NewIPRateLimiter(cfg.MessagesIPRateLimit, time.Duration(cfg.MessagesIPRateWindow)*time.Second),
+			cfg.MessagesMaxAttachSize,
+		)
+		if blobStore != nil {
+			r.h.message.SetBlobStore(blobStore)
+			r.h.formIngest.SetBlobStore(blobStore)
+		}
 	}
 
 	// SMTP Relay
@@ -492,6 +535,10 @@ func (r *Router) registerRoutes() {
 	if r.cfg.InboundEnabled && r.h.inbound != nil {
 		r.app.Register(r.inboundWebhookRoutes()...)
 		r.app.Register(r.inboundWorkspaceRoutes()...)
+	}
+	if r.cfg.MessagesEnabled && r.h.formIngest != nil {
+		r.app.Register(r.formIngestRoutes()...)
+		r.app.Register(r.messageWorkspaceRoutes()...)
 	}
 	r.app.Register(r.adminSSERoutes()...)
 	r.app.Register(r.adminRoutes()...)

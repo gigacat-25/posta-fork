@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package routes
 
@@ -31,7 +17,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodGet,
 			Path:    "/t/o/{message_id:int}.gif",
 			Handler: okapi.H(r.h.tracking.OpenPixel),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "Open tracking pixel",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -39,7 +25,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodGet,
 			Path:    "/t/c/{message_id:int}/{hash}",
 			Handler: okapi.H(r.h.tracking.ClickRedirect),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "Click tracking redirect",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -47,7 +33,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodGet,
 			Path:    "/t/u/{token}",
 			Handler: okapi.H(r.h.tracking.UnsubscribePage),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "Unsubscribe page",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -55,7 +41,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodPost,
 			Path:    "/t/u/{token}",
 			Handler: okapi.H(r.h.tracking.UnsubscribeConfirm),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "Confirm unsubscribe",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -63,7 +49,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodGet,
 			Path:    "/t/u/tx/{token}",
 			Handler: okapi.H(r.h.tracking.TxUnsubscribePage),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "Transactional unsubscribe page",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -71,7 +57,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodPost,
 			Path:    "/t/u/tx/{token}",
 			Handler: okapi.H(r.h.tracking.TxUnsubscribeConfirm),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "Transactional one-click unsubscribe (RFC 8058)",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -79,7 +65,7 @@ func (r *Router) trackingRoutes() []okapi.RouteDefinition {
 			Method:  http.MethodGet,
 			Path:    "/t/v/{token}",
 			Handler: okapi.H(r.h.tracking.WebView),
-			Tags:    []string{"Tracking"},
+			Tags:    []string{tagTracking},
 			Summary: "View email in browser",
 			Options: []okapi.RouteOption{okapi.DocHide()},
 		},
@@ -110,7 +96,7 @@ func (r *Router) bounceWebhookRoutes() []okapi.RouteDefinition {
 // scoped to the active workspace (workspace-only migration §7).
 func (r *Router) trackingAnalyticsRoutes() []okapi.RouteDefinition {
 	wsGroup := r.v1.Group("/workspaces/current", r.mw.auth, r.mw.workspace).WithTagInfo(okapi.GroupTag{
-		Name:        "Campaigns",
+		Name:        tagCampaigns,
 		Description: "Email campaign analytics — open, click, bounce, and engagement metrics for campaigns in the active workspace.",
 	})
 	wsGroup.WithBearerAuth()

@@ -1,13 +1,56 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { settingsApi } from '../../api/settings'
+import { authApi } from '../../api/auth'
 import { useThemeStore, type ThemeMode } from '../../stores/theme'
 import { useNotificationStore } from '../../stores/notification'
+import { useWorkspaceStore } from '../../stores/workspace'
+import { apiMessage } from '../../composables/apiError'
 import type { UserSettings } from '../../api/types'
 
 const theme = useThemeStore()
 const notify = useNotificationStore()
+const wsStore = useWorkspaceStore()
 const loading = ref(true)
+
+// The default workspace is saved through its own endpoint, not the debounced
+// settings form above, so it is kept out of `form` deliberately.
+// Two refs on purpose. `savedWorkspaceId` is the server's answer; `selected` is
+// what the control shows. Reverting a failed save has to move `selected`, which
+// the user already changed — writing the old value back to a ref that never
+// changed would not re-render, and the select would keep showing a choice that
+// was never saved.
+const savedWorkspaceId = ref<number | null>(null)
+const selectedWorkspaceId = ref<number | null>(null)
+const savingDefaultWorkspace = ref(false)
+const workspaceChoices = computed(() => wsStore.ownWorkspaces)
+
+async function loadDefaultWorkspace() {
+  try {
+    const res = await authApi.me()
+    savedWorkspaceId.value = res.data.data.default_workspace_id ?? null
+    selectedWorkspaceId.value = savedWorkspaceId.value
+  } catch {
+    // Non-critical: the select falls back to "not set".
+  }
+}
+
+async function saveDefaultWorkspace() {
+  const next = selectedWorkspaceId.value
+  if (!next || next === savedWorkspaceId.value) return
+
+  savingDefaultWorkspace.value = true
+  try {
+    await authApi.setDefaultWorkspace(next)
+    savedWorkspaceId.value = next
+    notify.success('Default workspace updated')
+  } catch (e: any) {
+    selectedWorkspaceId.value = savedWorkspaceId.value
+    notify.error(apiMessage(e, 'Failed to update the default workspace'))
+  } finally {
+    savingDefaultWorkspace.value = false
+  }
+}
 
 // Auto-save state. saveStatus drives the header indicator; ready gates the
 // watcher so the initial load doesn't trigger a save.
@@ -31,19 +74,21 @@ const form = ref<Partial<UserSettings>>({
   notify_bounce_alerts: true,
   notify_api_key_expiry: true,
   notify_workspace_activity: true,
+  notify_new_message: true,
 })
 
 // Per-type notification toggles rendered under the master switch. Security
 // alerts (sign-in, 2FA, password, account deletion) are always on and shown
 // separately as informational.
 const notificationTypes: {
-  key: 'daily_report' | 'notify_bounce_alerts' | 'notify_api_key_expiry' | 'notify_workspace_activity'
+  key: 'daily_report' | 'notify_bounce_alerts' | 'notify_api_key_expiry' | 'notify_workspace_activity' | 'notify_new_message'
   label: string
   hint: string
 }[] = [
   { key: 'notify_bounce_alerts', label: 'Bounce & deliverability alerts', hint: 'Warn me when my bounce rate crosses the safe threshold.' },
   { key: 'notify_api_key_expiry', label: 'API key expiry reminders', hint: 'Remind me before an API key expires.' },
   { key: 'notify_workspace_activity', label: 'Workspace updates', hint: 'Notify me about role changes and workspace activity.' },
+  { key: 'notify_new_message', label: 'Web form messages', hint: 'Notify me when a website form receives a new message.' },
   { key: 'daily_report', label: 'Daily report', hint: 'Receive a daily email summary of send statistics.' },
 ]
 
@@ -59,6 +104,8 @@ const themeModes: { value: ThemeMode; label: string; icon: string }[] = [
 ]
 
 onMounted(async () => {
+  loadDefaultWorkspace()
+  if (!wsStore.workspaces.length) wsStore.fetchWorkspaces()
   try {
     const res = await settingsApi.getUserSettings()
     const u = res.data.data
@@ -69,6 +116,7 @@ onMounted(async () => {
       notify_bounce_alerts: u.notify_bounce_alerts,
       notify_api_key_expiry: u.notify_api_key_expiry,
       notify_workspace_activity: u.notify_workspace_activity,
+      notify_new_message: u.notify_new_message,
     }
   } catch {
     notify.error('Failed to load settings')
@@ -199,6 +247,41 @@ async function autoSave() {
               <span class="form-hint">Sign-ins from new devices, 2FA changes, password changes, and account deletion. Always on to protect your account.</span>
             </div>
             <span class="badge badge-success notif-always-on">Always on</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Default workspace -->
+      <div class="card">
+        <div class="card-header"><h2>Default workspace</h2></div>
+        <div class="card-body">
+          <p class="section-description">
+            Where a request that names no workspace operates. The dashboard always names one,
+            so this applies to API keys, the SDKs, and curl — anything that omits the
+            <code>X-Posta-Workspace-Id</code> header.
+          </p>
+
+          <div v-if="!workspaceChoices.length" class="form-hint">
+            You do not belong to a workspace yet.
+          </div>
+
+          <div v-else class="form-group">
+            <label class="form-label" for="default-workspace">Workspace</label>
+            <select
+              id="default-workspace"
+              v-model.number="selectedWorkspaceId"
+              class="form-select"
+              :disabled="savingDefaultWorkspace"
+              @change="saveDefaultWorkspace"
+            >
+              <option v-if="savedWorkspaceId === null" :value="null" disabled>Not set</option>
+              <option v-for="ws in workspaceChoices" :key="ws.id" :value="ws.id">
+                {{ ws.name }}
+              </option>
+            </select>
+            <span class="form-hint">
+              Your role in the chosen workspace applies to those requests, so a viewer stays a viewer.
+            </span>
           </div>
         </div>
       </div>

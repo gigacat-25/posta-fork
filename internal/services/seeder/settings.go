@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package seeder
 
@@ -33,28 +19,28 @@ func SeedDefaultSettings(repo *repositories.SettingRepository) {
 	}
 
 	defaults := []models.Setting{
-		{Key: "registration_enabled", Value: "false", Type: "bool"},
-		{Key: "require_email_verification", Value: "true", Type: "bool"},
-		{Key: "require_domain_verification", Value: "true", Type: "bool"},
-		{Key: "default_rate_limit_hourly", Value: "100", Type: "int"},
-		{Key: "default_rate_limit_daily", Value: "1000", Type: "int"},
-		{Key: "max_batch_size", Value: "100", Type: "int"},
-		{Key: "max_attachment_size_mb", Value: "10", Type: "int"},
-		{Key: "retention_days", Value: "30", Type: "int"},
-		{Key: "email_body_retention_days", Value: retentionDays, Type: "int"},
-		{Key: "email_attachment_retention_days", Value: retentionDays, Type: "int"},
-		{Key: "global_bounce_threshold", Value: "5", Type: "int"},
-		{Key: "smtp_timeout_seconds", Value: "30", Type: "int"},
-		{Key: "maintenance_mode", Value: "false", Type: "bool"},
-		{Key: "allowed_signup_domains", Value: "", Type: "string"},
-		{Key: "two_factor_required", Value: "false", Type: "bool"},
-		{Key: "login_rate_limit_count", Value: "10", Type: "int"},
-		{Key: "login_rate_limit_window_minutes", Value: "15", Type: "int"},
-		{Key: "audit_log_retention_days", Value: "90", Type: "int"},
-		{Key: "webhook_delivery_retention_days", Value: "30", Type: "int"},
-		{Key: "email_content_visibility", Value: "false", Type: "bool"},
-		{Key: "custom_headers_enabled", Value: "false", Type: "bool"},
-		{Key: "password_reset_enabled", Value: "false", Type: "bool"},
+		{Key: "registration_enabled", Value: models.SettingFalse, Type: models.SettingTypeBool},
+		{Key: "require_email_verification", Value: models.SettingTrue, Type: models.SettingTypeBool},
+		{Key: "require_domain_verification", Value: models.SettingTrue, Type: models.SettingTypeBool},
+		{Key: "default_rate_limit_hourly", Value: "100", Type: models.SettingTypeInt},
+		{Key: "default_rate_limit_daily", Value: "1000", Type: models.SettingTypeInt},
+		{Key: "max_batch_size", Value: "100", Type: models.SettingTypeInt},
+		{Key: "max_attachment_size_mb", Value: "10", Type: models.SettingTypeInt},
+		{Key: "retention_days", Value: "30", Type: models.SettingTypeInt},
+		{Key: "email_body_retention_days", Value: retentionDays, Type: models.SettingTypeInt},
+		{Key: "email_attachment_retention_days", Value: retentionDays, Type: models.SettingTypeInt},
+		{Key: "global_bounce_threshold", Value: "5", Type: models.SettingTypeInt},
+		{Key: "smtp_timeout_seconds", Value: "30", Type: models.SettingTypeInt},
+		{Key: "maintenance_mode", Value: models.SettingFalse, Type: models.SettingTypeBool},
+		{Key: "allowed_signup_domains", Value: "", Type: models.SettingTypeString},
+		{Key: "two_factor_required", Value: models.SettingFalse, Type: models.SettingTypeBool},
+		{Key: "login_rate_limit_count", Value: "10", Type: models.SettingTypeInt},
+		{Key: "login_rate_limit_window_minutes", Value: "15", Type: models.SettingTypeInt},
+		{Key: "audit_log_retention_days", Value: "90", Type: models.SettingTypeInt},
+		{Key: "webhook_delivery_retention_days", Value: "30", Type: models.SettingTypeInt},
+		{Key: "email_content_visibility", Value: models.SettingFalse, Type: models.SettingTypeBool},
+		{Key: "custom_headers_enabled", Value: models.SettingFalse, Type: models.SettingTypeBool},
+		{Key: "password_reset_enabled", Value: models.SettingFalse, Type: models.SettingTypeBool},
 	}
 
 	for i := range defaults {

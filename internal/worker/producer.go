@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package worker
 
@@ -152,6 +138,24 @@ func (p *Producer) EnqueueInboundParse(inboundEmailID uint) error {
 	}
 	if _, err := p.client.Enqueue(task); err != nil {
 		return fmt.Errorf("failed to enqueue inbound parse task: %w", err)
+	}
+	return nil
+}
+
+func (p *Producer) EnqueueMessageProcess(messageID uint) error {
+	task, err := NewMessageProcessTask(messageID,
+		asynq.Queue(QueueTransactional),
+		asynq.MaxRetry(p.maxRetries),
+		asynq.TaskID(fmt.Sprintf("message:process:%d", messageID)),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create message task: %w", err)
+	}
+	if _, err := p.client.Enqueue(task); err != nil {
+		if errors.Is(err, asynq.ErrTaskIDConflict) {
+			return nil
+		}
+		return fmt.Errorf("failed to enqueue message task: %w", err)
 	}
 	return nil
 }

@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package routes
 
@@ -29,7 +15,7 @@ import (
 // userRoutes returns route definitions for all authenticated user endpoints.
 func (r *Router) userRoutes() []okapi.RouteDefinition {
 	userGroup := r.v1.Group("/users/me", r.mw.jwtOnly, r.mw.optionalWorkspace).WithTagInfo(okapi.GroupTag{
-		Name:        "User",
+		Name:        tagUser,
 		Description: "Manage the authenticated user: profile, password, API keys, notification preferences, and session. Requires a dashboard session — an API key cannot administer the account that issued it.",
 	})
 	userGroup.WithBearerAuth()
@@ -172,6 +158,20 @@ func (r *Router) userRoutes() []okapi.RouteDefinition {
 			Response:    &dto.Response[any]{},
 		},
 		{
+			Method:      http.MethodPut,
+			Path:        "/default-workspace",
+			Handler:     okapi.H(r.h.user.SetDefaultWorkspace),
+			Group:       userGroup,
+			Summary:     "Set the default workspace",
+			Description: "Chooses which workspace a request that sends no X-Posta-Workspace-Id header operates on. The caller must be a member.",
+			Request:     &handlers.SetDefaultWorkspaceRequest{},
+			Response:    &dto.Response[dto.MessageData]{},
+			Options: []okapi.RouteOption{
+				okapi.DocErrorResponse(400, &dto.ErrorResponseBody{}),
+				okapi.DocErrorResponse(404, &dto.ErrorResponseBody{}),
+			},
+		},
+		{
 			Method:      http.MethodGet,
 			Path:        "/audit-log",
 			Handler:     okapi.H(r.h.event.UserAuditLog),
@@ -183,7 +183,7 @@ func (r *Router) userRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:      http.MethodGet,
-			Path:        "/settings",
+			Path:        pathSettings,
 			Handler:     r.h.userSetting.GetSettings,
 			Group:       userGroup,
 			Summary:     "Get user settings",
@@ -192,7 +192,7 @@ func (r *Router) userRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:      http.MethodPut,
-			Path:        "/settings",
+			Path:        pathSettings,
 			Handler:     okapi.H(r.h.userSetting.UpdateSettings),
 			Group:       userGroup,
 			Summary:     "Update user settings",

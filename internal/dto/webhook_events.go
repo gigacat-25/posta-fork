@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package dto
 
@@ -75,4 +61,30 @@ type InboundWebhookAttachment struct {
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
 	URL         string `json:"url,omitempty"`
+}
+
+// MessageWebhookEvent is the payload for message.received and message.spam.
+type MessageWebhookEvent struct {
+	Event       string                `json:"event"`
+	Timestamp   string                `json:"timestamp"`
+	MessageID   string                `json:"message_id"`
+	FormID      string                `json:"form_id"`
+	FormName    string                `json:"form_name"`
+	SenderEmail string                `json:"sender_email,omitempty"`
+	SenderName  string                `json:"sender_name,omitempty"`
+	SenderPhone string                `json:"sender_phone,omitempty"`
+	Subject     string                `json:"subject,omitempty"`
+	Body        string                `json:"body,omitempty"`
+	Fields      []MessageWebhookField `json:"fields,omitempty"`
+	Status      string                `json:"status"`
+	SpamScore   float64               `json:"spam_score"`
+	ScanReasons []string              `json:"scan_reasons,omitempty"`
+	ClientIP    string                `json:"client_ip,omitempty"`
+	ReceivedAt  string                `json:"received_at"`
+}
+
+// MessageWebhookField is one submitted form field in a MessageWebhookEvent.
+type MessageWebhookField struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }

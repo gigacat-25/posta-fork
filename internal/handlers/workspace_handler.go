@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package handlers
 
@@ -28,6 +14,7 @@ import (
 	"github.com/goposta/posta/internal/models"
 	"github.com/goposta/posta/internal/services/audit"
 	"github.com/goposta/posta/internal/services/notification"
+	"github.com/goposta/posta/internal/services/workspace"
 	"github.com/goposta/posta/internal/storage/repositories"
 	"github.com/jkaninda/okapi"
 	"gorm.io/gorm"
@@ -41,6 +28,13 @@ type WorkspaceHandler struct {
 	notifier      *notification.Service
 	appURL        string
 	audit         *audit.Logger
+	seeder        workspaceSeeder
+}
+
+// workspaceSeeder fills a new workspace with the default templates, stylesheet,
+// and languages. Optional: without one, workspaces are simply created empty.
+type workspaceSeeder interface {
+	SeedWorkspaceDefaults(workspaceID, userID uint, userName string)
 }
 
 // planService is an optional interface for resolving workspace plans and quotas.
@@ -57,12 +51,22 @@ func NewWorkspaceHandler(workspaceRepo *repositories.WorkspaceRepository, userRe
 	}
 }
 
+// SetSeeder enables starter content on newly created workspaces. Without one,
+// workspaces are created empty and the seed_defaults flag has no effect.
+func (h *WorkspaceHandler) SetSeeder(s workspaceSeeder) { h.seeder = s }
+
 type CreateWorkspaceRequest struct {
 	Body struct {
 		Name            string `json:"name" required:"true" minLength:"1"`
 		Slug            string `json:"slug"`
 		Description     string `json:"description"`
 		DefaultLanguage string `json:"default_language"`
+		// SeedDefaults fills the new workspace with starter templates, a
+		// stylesheet, and languages. Omitted means yes: an empty workspace has
+		// nothing to send and nothing to look at, which is rarely what someone
+		// creating one wants. Send false for a workspace you intend to populate
+		// from an export or the API.
+		SeedDefaults *bool `json:"seed_defaults" doc:"Seed starter templates and a stylesheet. Defaults to true."`
 	} `json:"body"`
 }
 
@@ -105,14 +109,17 @@ type DeclineInvitationRequest struct {
 }
 
 type WorkspaceResponse struct {
-	ID          uint      `json:"id"`
-	Name        string    `json:"name"`
-	Slug        string    `json:"slug"`
-	Description string    `json:"description"`
-	OwnerID     uint      `json:"owner_id"`
-	Role        string    `json:"role"`
-	IsPersonal  bool      `json:"is_personal"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          uint   `json:"id"`
+	Name        string `json:"name"`
+	Slug        string `json:"slug"`
+	Description string `json:"description"`
+	OwnerID     uint   `json:"owner_id"`
+	Role        string `json:"role"`
+	System      bool   `json:"system"`
+	// Deprecated: the personal workspace type was removed; always false. Kept for
+	// one minor release so an older dashboard build keeps parsing the response.
+	IsPersonal bool      `json:"is_personal"`
+	CreatedAt  time.Time `json:"created_at"`
 }
 
 type WorkspaceMemberResponse struct {
@@ -153,6 +160,9 @@ func (h *WorkspaceHandler) Create(c *okapi.Context, req *CreateWorkspaceRequest)
 	if !isValidSlug(slug) {
 		return c.AbortBadRequest("slug must contain only lowercase letters, numbers, and hyphens")
 	}
+	if workspace.IsReservedSlug(slug) {
+		return c.AbortConflict("that slug is reserved by the platform")
+	}
 
 	// Check slug uniqueness
 	if _, err := h.workspaceRepo.FindBySlug(slug); err == nil {
@@ -186,7 +196,17 @@ func (h *WorkspaceHandler) Create(c *okapi.Context, req *CreateWorkspaceRequest)
 		return c.AbortInternalServerError("failed to add workspace member")
 	}
 
-	h.logAudit(c, ws.ID, "workspace.created", "Workspace created: "+ws.Name, map[string]any{"slug": ws.Slug})
+	seeded := shouldSeedWorkspace(req.Body.SeedDefaults)
+	if seeded && h.seeder != nil {
+		// Best effort and after the audit-relevant work: a workspace that exists
+		// but has no starter content is a far better outcome than a create call
+		// that fails once the row is already committed.
+		h.seeder.SeedWorkspaceDefaults(ws.ID, uint(userID), h.ownerName(uint(userID)))
+	}
+
+	h.logAudit(c, ws.ID, "workspace.created", "Workspace created: "+ws.Name, map[string]any{
+		metaSlug: ws.Slug, "seeded": seeded,
+	})
 
 	return created(c, WorkspaceResponse{
 		ID:          ws.ID,
@@ -195,9 +215,30 @@ func (h *WorkspaceHandler) Create(c *okapi.Context, req *CreateWorkspaceRequest)
 		Description: ws.Description,
 		OwnerID:     ws.OwnerID,
 		Role:        string(models.WorkspaceRoleOwner),
-		IsPersonal:  ws.IsPersonal,
+		System:      ws.System,
 		CreatedAt:   ws.CreatedAt,
 	})
+}
+
+// shouldSeedWorkspace reads the opt-out. Absent means yes: a client that
+// predates the flag, or one that simply does not care, gets the starter content
+// rather than an empty workspace.
+func shouldSeedWorkspace(flag *bool) bool {
+	return flag == nil || *flag
+}
+
+// ownerName resolves the creator's name for the seeded templates' sample data.
+// An empty result is fine: the seeder greets generically rather than naming
+// somebody.
+func (h *WorkspaceHandler) ownerName(userID uint) string {
+	if h.userRepo == nil {
+		return ""
+	}
+	user, err := h.userRepo.FindByID(userID)
+	if err != nil || user == nil {
+		return ""
+	}
+	return user.Name
 }
 
 func (h *WorkspaceHandler) List(c *okapi.Context) error {
@@ -222,7 +263,7 @@ func (h *WorkspaceHandler) List(c *okapi.Context) error {
 			Description: ws.Description,
 			OwnerID:     ws.OwnerID,
 			Role:        role,
-			IsPersonal:  ws.IsPersonal,
+			System:      ws.System,
 			CreatedAt:   ws.CreatedAt,
 		})
 	}
@@ -247,7 +288,7 @@ func (h *WorkspaceHandler) Get(c *okapi.Context) error {
 		Description: ws.Description,
 		OwnerID:     ws.OwnerID,
 		Role:        role,
-		IsPersonal:  ws.IsPersonal,
+		System:      ws.System,
 		CreatedAt:   ws.CreatedAt,
 	})
 }
@@ -260,6 +301,9 @@ func (h *WorkspaceHandler) Update(c *okapi.Context, req *UpdateWorkspaceRequest)
 		return c.AbortNotFound("workspace not found")
 	}
 
+	if ws.System && req.Body.Name != "" && strings.TrimSpace(req.Body.Name) != ws.Name {
+		return c.AbortConflict("the system workspace cannot be renamed")
+	}
 	if req.Body.Name != "" {
 		ws.Name = strings.TrimSpace(req.Body.Name)
 	}
@@ -286,7 +330,7 @@ func (h *WorkspaceHandler) Update(c *okapi.Context, req *UpdateWorkspaceRequest)
 		Description: ws.Description,
 		OwnerID:     ws.OwnerID,
 		Role:        role,
-		IsPersonal:  ws.IsPersonal,
+		System:      ws.System,
 		CreatedAt:   ws.CreatedAt,
 	})
 }
@@ -298,15 +342,19 @@ func (h *WorkspaceHandler) Delete(c *okapi.Context) error {
 	if err != nil {
 		return c.AbortNotFound("workspace not found")
 	}
-	if ws.IsPersonal {
-		return c.AbortBadRequest("personal workspace cannot be deleted")
+	if ws.System {
+		return c.AbortConflict("the system workspace cannot be deleted")
+	}
+	userID := uint(c.GetInt("user_id"))
+	if h.workspaceRepo.CountNonSystemMemberships(userID) <= 1 {
+		return c.AbortBadRequest("this is your only workspace; create another before deleting this one")
 	}
 
 	if err := h.workspaceRepo.Delete(uint(wsID)); err != nil {
 		return c.AbortInternalServerError("failed to delete workspace")
 	}
 
-	h.logAudit(c, ws.ID, "workspace.deleted", "Workspace deleted: "+ws.Name, map[string]any{"slug": ws.Slug})
+	h.logAudit(c, ws.ID, "workspace.deleted", "Workspace deleted: "+ws.Name, map[string]any{metaSlug: ws.Slug})
 
 	return noContent(c)
 }
@@ -788,11 +836,11 @@ func (h *WorkspaceHandler) logAudit(c *okapi.Context, workspaceID uint, action, 
 func (h *WorkspaceHandler) GetPlan(c *okapi.Context) error {
 	wsID := uint(c.GetInt("workspace_id"))
 	if h.planService == nil {
-		return ok(c, okapi.M{"plan": nil, "source": "global_settings"})
+		return ok(c, okapi.M{"plan": nil, "source": planSourceGlobalSettings})
 	}
 	plan := h.planService.EffectivePlan(&wsID)
 	if plan == nil {
-		return ok(c, okapi.M{"plan": nil, "source": "global_settings"})
+		return ok(c, okapi.M{"plan": nil, "source": planSourceGlobalSettings})
 	}
 	return ok(c, plan)
 }

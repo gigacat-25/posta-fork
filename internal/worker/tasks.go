@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package worker
 
@@ -29,6 +15,7 @@ const (
 	TypeCampaignBatch  = "campaign:batch"
 	TypeInboundParse   = "inbound:parse"
 	TypeInboundProcess = "inbound:process"
+	TypeMessageProcess = "message:process"
 
 	QueueTransactional = "transactional"
 	QueueBulk          = "bulk"
@@ -94,4 +81,16 @@ func NewInboundParseTask(id uint, opts ...asynq.Option) (*asynq.Task, error) {
 		return nil, err
 	}
 	return asynq.NewTask(TypeInboundParse, payload, opts...), nil
+}
+
+type MessageProcessPayload struct {
+	MessageID uint `json:"message_id"`
+}
+
+func NewMessageProcessTask(id uint, opts ...asynq.Option) (*asynq.Task, error) {
+	payload, err := json.Marshal(MessageProcessPayload{MessageID: id})
+	if err != nil {
+		return nil, err
+	}
+	return asynq.NewTask(TypeMessageProcess, payload, opts...), nil
 }

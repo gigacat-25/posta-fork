@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package models
 
@@ -44,9 +30,11 @@ type User struct {
 	CreatedAt             time.Time  `json:"created_at"`
 	LastLoginAt           *time.Time `json:"last_login_at"`
 
-	PersonalWorkspaceID *uint      `json:"personal_workspace_id" gorm:"index"`
-	MigratedAt          *time.Time `json:"migrated_at"`
-	MigrationError      string     `json:"migration_error,omitempty" gorm:"type:text"`
+	// DefaultWorkspaceID is where a request that names no workspace lands. It is
+	// user-settable and repaired when it points at a workspace the user has left.
+	DefaultWorkspaceID *uint      `json:"default_workspace_id" gorm:"index"`
+	MigratedAt         *time.Time `json:"-"`
+	MigrationError     string     `json:"-" gorm:"type:text"`
 
 	Plan Plan `json:"-" gorm:"foreignKey:PlanID"`
 }

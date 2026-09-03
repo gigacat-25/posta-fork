@@ -6,13 +6,37 @@ description: Multi-tenant workspaces, roles, and the workspace context header
 
 # Workspaces
 
-Workspaces provide multi-tenant isolation within Posta. They work like GitHub Organizations — every user has a **personal space** by default and can optionally create **workspaces** to share resources with team members.
+Workspaces provide multi-tenant isolation within Posta. Every resource — templates, SMTP servers, domains, contacts, API keys — belongs to exactly one workspace, and a workspace is shared with as many or as few people as you invite.
 
 ## Concepts
 
 ### Personal space
 
-Every user has a personal space where their resources (templates, SMTP servers, domains, contacts, API keys, etc.) live by default. No workspace is required — the platform works for a single user out of the box. The personal space is itself a workspace flagged `is_personal: true`; it is owned by the user and cannot be deleted.
+A workspace is provisioned for you when you sign up, named after you and owned by you. It is an ordinary workspace in every respect: rename it, invite people to it, or delete it once you have another. There is no separate "personal" workspace type.
+
+One workspace is special. The **system workspace** is created on first boot, owned by the first administrator, and holds platform-managed resources. It is flagged `system: true`, admits only platform administrators, and cannot be renamed or deleted.
+
+### The system workspace
+
+Its job is to give the platform's own mail somewhere to belong. Posta sends password resets, email verification, sign-in alerts, workspace invitations, and daily reports on its own behalf; that mail needs an SMTP server that belongs to the operator rather than to a tenant.
+
+On boot, the `POSTA_SYSTEM_SMTP_*` settings are provisioned as an ordinary `SMTPServer` inside this workspace, labelled **System SMTP**. Because it is an ordinary workspace-scoped server, it appears under SMTP Servers in the dashboard, can be tested from there, and the normal delivery pipeline can send through it with no special cases.
+
+Ownership of that row is split:
+
+| Field | Owner | On restart |
+|-------|-------|------------|
+| Host, port, username, password, encryption | Configuration | Re-synced from the environment |
+| Name, status, retry and recipient limits | Operator | Left as you set them |
+
+That is what makes credential rotation a matter of changing the environment and restarting, while leaving you free to relabel the server without a restart undoing it.
+
+Two consequences worth knowing:
+
+- **The provisioned server cannot be deleted** (`409`). It is recreated from configuration on the next restart regardless, and platform mail depends on it.
+- **Disabling it does not stop platform mail.** Password resets and security alerts must reach you even when something is misconfigured, so the notification path uses the row's connection settings without consulting its status. Whether the platform sends at all is governed by whether `POSTA_SYSTEM_SMTP_*` is configured.
+
+A server you add to the system workspace yourself is left alone: the provisioned one is found by an internal marker, never by name or position.
 
 ### Workspaces
 
@@ -69,7 +93,7 @@ The header value is the numeric workspace ID. If you are not a member of that wo
 The correct header is `X-Posta-Workspace-Id`. Earlier drafts referred to `X-Workspace-ID` — that name is wrong and is not recognized by the API.
 :::
 
-To operate against your personal space, pass its workspace ID in the header (you can find it in the `GET /api/v1/workspaces` list, where `is_personal` is `true`).
+Omit the header and the request operates on your **default workspace** — the one you last set with `PUT /api/v1/users/me/default-workspace`, or the oldest one you belong to. The role you hold in that workspace applies, so a viewer stays a viewer on a header-less request.
 
 ### Workspace-scoped API keys
 
@@ -126,11 +150,16 @@ Request body:
   "name": "Acme Inc",
   "slug": "acme",
   "description": "Marketing and transactional mail",
-  "default_language": "en"
+  "default_language": "en",
+  "seed_defaults": true
 }
 ```
 
 Only `name` is required. If `slug` is omitted it is derived from the name; slugs must contain only lowercase letters, numbers, and hyphens, and must be unique. `default_language` defaults to `en`. The caller becomes the workspace **owner**.
+
+`seed_defaults` controls whether the new workspace starts with content: a welcome template in English, French and German, a default stylesheet, and the matching languages. It defaults to `true`, so omitting it gives you a workspace you can send from immediately. Send `false` when you intend to populate the workspace from an [export](../gdpr/data-export-import.md) or the API and do not want the starter template in the way.
+
+Seeding is best effort and runs after the workspace exists, so a workspace is never left uncreated because its starter content failed.
 
 ```bash
 curl -X POST http://localhost:9000/api/v1/workspaces \
@@ -150,7 +179,7 @@ Response (`201`):
     "description": "",
     "owner_id": 42,
     "role": "owner",
-    "is_personal": false,
+    "system": false,
     "created_at": "2026-05-31T10:00:00Z"
   }
 }
@@ -164,7 +193,7 @@ Creating a workspace is subject to your plan's workspace quota; exceeding it ret
 GET /api/v1/workspaces
 ```
 
-Returns every workspace the current user is a member of, including the personal space. Each entry carries the caller's `role` in that workspace and the `is_personal` flag.
+Returns every workspace the current user is a member of. Each entry carries the caller's `role` in that workspace and a `system` flag, which is true only for the built-in platform workspace.
 
 ## Get, update, and delete the current workspace
 
@@ -184,7 +213,12 @@ DELETE /api/v1/workspaces/current
 }
 ```
 
-`DELETE` removes the workspace and returns `204`. The personal workspace cannot be deleted (`400`).
+`DELETE` removes the workspace and returns `204`.
+
+Two workspaces refuse deletion:
+
+- The **system workspace** returns `409`. It is the built-in platform workspace, created on first boot, owned by the first administrator, and holds platform-managed resources. It cannot be renamed either, and only platform administrators are members.
+- Your **last remaining workspace** returns `400`. Everything in Posta belongs to a workspace, so deleting the only one you belong to would leave you with nowhere to work. Create another first.
 
 ```bash
 curl -X PUT http://localhost:9000/api/v1/workspaces/current \

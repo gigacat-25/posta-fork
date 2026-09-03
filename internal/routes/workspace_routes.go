@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package routes
 
@@ -31,7 +17,7 @@ import (
 func (r *Router) workspaceRoutes() []okapi.RouteDefinition {
 	// Routes that don't require workspace context (user-level)
 	userGroup := r.v1.Group("/workspaces", r.mw.jwtOnly).WithTagInfo(okapi.GroupTag{
-		Name:        "Workspaces",
+		Name:        tagWorkspaces,
 		Description: "Create workspaces, manage members and invitations, and configure workspace-scoped settings. Creating and listing workspaces is account-level and requires a dashboard session.",
 	})
 	userGroup.WithBearerAuth()
@@ -66,8 +52,8 @@ func (r *Router) workspaceRoutes() []okapi.RouteDefinition {
 
 	// Workspace-scoped routes (require workspace context via middleware)
 	wsGroup := r.v1.Group("/workspaces/current", r.mw.auth, r.mw.workspace).WithTagInfo(okapi.GroupTag{
-		Name:        "Workspaces",
-		Description: "Create workspaces, manage members and invitations, and configure workspace-scoped settings (including SSO).",
+		Name:        tagWorkspaces,
+		Description: descWorkspacesWithSSO,
 	})
 	wsGroup.WithBearerAuth()
 
@@ -213,7 +199,7 @@ func (r *Router) workspaceRoutes() []okapi.RouteDefinition {
 		// Operational settings
 		{
 			Method:      http.MethodGet,
-			Path:        "/settings",
+			Path:        pathSettings,
 			Handler:     r.h.workspaceSetting.GetSettings,
 			Group:       wsGroup,
 			Summary:     "Get workspace settings",
@@ -223,7 +209,7 @@ func (r *Router) workspaceRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:      http.MethodPut,
-			Path:        "/settings",
+			Path:        pathSettings,
 			Handler:     okapi.H(r.h.workspaceSetting.UpdateSettings),
 			Group:       wsGroup,
 			Middlewares: []okapi.Middleware{middlewares.RequireWorkspaceRole(models.WorkspaceRoleAdmin)},
@@ -321,8 +307,8 @@ func (r *Router) workspaceRoutes() []okapi.RouteDefinition {
 
 	// User-level invitation actions (no workspace context needed)
 	invGroup := r.v1.Group("/invitations", r.mw.jwtOnly).WithTagInfo(okapi.GroupTag{
-		Name:        "Workspaces",
-		Description: "Create workspaces, manage members and invitations, and configure workspace-scoped settings (including SSO).",
+		Name:        tagWorkspaces,
+		Description: descWorkspacesWithSSO,
 	})
 	invGroup.WithBearerAuth()
 

@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package email
 
@@ -304,6 +290,10 @@ type Unsubscribe struct {
 	// an https URL for the caller-managed path).
 	OneClick bool `json:"one_click,omitempty" doc:"Emit 'List-Unsubscribe-Post: List-Unsubscribe=One-Click' (RFC 8058). Applies to the https URL target only; the caller-managed path requires an https url. Implied true on the Posta-managed (list_id) path."`
 }
+
+// errRecipientSuppressed is the reason recorded on an email, and reported in a
+// batch result, when the recipient is on the workspace suppression list.
+const errRecipientSuppressed = "recipient is suppressed"
 
 type SendRequest struct {
 	From        string              `json:"from" required:"true" doc:"Sender address. Accepts a plain address (hello@example.com) or RFC 5322 display-name format (Acme <hello@example.com>)."`
@@ -707,7 +697,7 @@ func (s *Service) Send(ctx context.Context, userID, apiKeyID uint, workspaceID *
 					Subject:      req.Subject,
 					TemplateName: req.TemplateName,
 					Status:       models.EmailStatusSuppressed,
-					ErrorMessage: "recipient is suppressed",
+					ErrorMessage: errRecipientSuppressed,
 					Provider:     ClassifyProvider(addr),
 				}
 				_ = s.emailRepo.Create(em)
@@ -1020,7 +1010,7 @@ func (s *Service) SendBatch(ctx context.Context, userID, apiKeyID uint, workspac
 					Subject:      req.Template,
 					TemplateName: tmpl.Name,
 					Status:       models.EmailStatusSuppressed,
-					ErrorMessage: "recipient is suppressed",
+					ErrorMessage: errRecipientSuppressed,
 					Provider:     ClassifyProvider(recipient.Email),
 				}
 				_ = s.emailRepo.Create(em)
@@ -1030,7 +1020,7 @@ func (s *Service) SendBatch(ctx context.Context, userID, apiKeyID uint, workspac
 					Email:  recipient.Email,
 					ID:     em.UUID,
 					Status: models.EmailStatusSuppressed,
-					Error:  "recipient is suppressed",
+					Error:  errRecipientSuppressed,
 				})
 				continue
 			}

@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package domain
 
@@ -23,6 +9,9 @@ import (
 
 	"github.com/goposta/posta/internal/models"
 )
+
+// recordTypeTXT is the DNS record type every verification check reads.
+const recordTypeTXT = "TXT"
 
 // VerificationResult holds the outcome of DNS record checks.
 type VerificationResult struct {
@@ -53,12 +42,12 @@ type DNSRecord struct {
 func RequiredRecords(d *models.Domain) *DNSRecords {
 	return &DNSRecords{
 		Verification: DNSRecord{
-			Type:  "TXT",
+			Type:  recordTypeTXT,
 			Host:  d.Domain,
 			Value: "posta-verification=" + d.VerificationToken,
 		},
 		SPF: DNSRecord{
-			Type:  "TXT",
+			Type:  recordTypeTXT,
 			Host:  d.Domain,
 			Value: "v=spf1 include:_spf.posta ~all",
 		},
@@ -68,7 +57,7 @@ func RequiredRecords(d *models.Domain) *DNSRecords {
 			Value: "posta._domainkey.posta",
 		},
 		DMARC: DNSRecord{
-			Type:  "TXT",
+			Type:  recordTypeTXT,
 			Host:  "_dmarc." + d.Domain,
 			Value: "v=DMARC1; p=none; rua=mailto:dmarc@" + d.Domain,
 		},

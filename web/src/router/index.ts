@@ -61,6 +61,11 @@ const routes = [
       { path: 'emails/:id', name: 'email-detail', component: () => import('../views/emails/EmailDetail.vue'), meta: { title: 'Email' } },
       { path: 'inbound-emails', name: 'inbound-emails', component: () => import('../views/inbound/InboundEmails.vue'), meta: { title: 'Inbound Emails' } },
       { path: 'inbound-emails/:id', name: 'inbound-email-detail', component: () => import('../views/inbound/InboundEmailDetail.vue'), meta: { title: 'Inbound Email' } },
+      { path: 'messages', name: 'messages', component: () => import('../views/messages/Messages.vue'), meta: { title: 'Messages' } },
+      { path: 'messages/:id', name: 'message-detail', component: () => import('../views/messages/MessageDetail.vue'), meta: { title: 'Message' } },
+      { path: 'message-filters', name: 'message-filters', component: () => import('../views/messages/MessageFilters.vue'), meta: { title: 'Spam Filters' } },
+      { path: 'forms', name: 'forms', component: () => import('../views/forms/Forms.vue'), meta: { title: 'Forms' } },
+      { path: 'forms/:id', name: 'form-detail', component: () => import('../views/forms/FormDetail.vue'), meta: { title: 'Form' } },
       { path: 'templates', name: 'templates', component: () => import('../views/templates/Templates.vue'), meta: { title: 'Templates' } },
       { path: 'templates/preview', name: 'template-preview-general', component: () => import('../views/emails/EmailPreview.vue'), meta: { title: 'Template Preview' } },
       { path: 'templates/:id/preview', name: 'template-preview', component: () => import('../views/templates/TemplatePreview.vue'), meta: { title: 'Template Preview' } },
@@ -98,7 +103,10 @@ const routes = [
       // Admin
       { path: 'admin/users', name: 'admin-users', component: () => import('../views/admin/Users.vue'), meta: { admin: true, title: 'Admin · Users' } },
       { path: 'admin/users/:id', name: 'admin-user-detail', component: () => import('../views/admin/UserDetail.vue'), meta: { admin: true, title: 'Admin · User' } },
-      { path: 'admin/metrics', name: 'admin-metrics', component: () => import('../views/admin/Metrics.vue'), meta: { admin: true, title: 'Admin · Metrics' } },
+      { path: 'admin/dashboard', name: 'admin-dashboard', component: () => import('../views/admin/Dashboard.vue'), meta: { admin: true, title: 'Admin · Dashboard' } },
+      // The page was called Metrics until it grew a health summary and quick
+      // links; keep the old path working for bookmarks and muscle memory.
+      { path: 'admin/metrics', redirect: '/admin/dashboard' },
       { path: 'admin/events', name: 'admin-events', component: () => import('../views/admin/Events.vue'), meta: { admin: true, title: 'Admin · Events' } },
       { path: 'admin/events/:id', name: 'admin-event-detail', component: () => import('../views/admin/EventDetail.vue'), meta: { admin: true, title: 'Admin · Event' } },
       { path: 'admin/plans', name: 'admin-plans', component: () => import('../views/admin/Plans.vue'), meta: { admin: true, title: 'Admin · Plans' } },

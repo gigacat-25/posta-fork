@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package migration
 
@@ -79,7 +65,39 @@ func runConstraints(db *gorm.DB) {
 	END $$`)
 
 	db.Exec(`DO $$ BEGIN
-		CREATE UNIQUE INDEX IF NOT EXISTS one_personal_per_user ON workspaces (owner_id) WHERE is_personal;
+		CREATE UNIQUE INDEX IF NOT EXISTS one_system_workspace ON workspaces ((true)) WHERE system;
+	EXCEPTION WHEN others THEN NULL;
+	END $$`)
+
+	db.Exec(`DO $$ BEGIN
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_form_slug ON forms (workspace_id, slug) WHERE workspace_id IS NOT NULL AND deleted_at IS NULL;
+	EXCEPTION WHEN others THEN NULL;
+	END $$`)
+
+	db.Exec(`DO $$ BEGIN
+		CREATE INDEX IF NOT EXISTS idx_messages_ws_created ON messages (workspace_id, created_at DESC) WHERE deleted_at IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_messages_form_status ON messages (form_id, status, created_at DESC) WHERE deleted_at IS NULL;
+		CREATE INDEX IF NOT EXISTS idx_messages_dedup ON messages (form_id, dedup_hash, created_at DESC) WHERE dedup_hash <> '';
+		CREATE INDEX IF NOT EXISTS idx_messages_inbox ON messages (workspace_id, state, created_at DESC) WHERE deleted_at IS NULL AND status IN ('received','flagged');
+	EXCEPTION WHEN others THEN NULL;
+	END $$`)
+
+	db.Exec(`DO $$ BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_messages_form') THEN
+			ALTER TABLE messages ADD CONSTRAINT fk_messages_form
+				FOREIGN KEY (form_id) REFERENCES forms(id) ON DELETE CASCADE;
+		END IF;
+	END $$`)
+
+	db.Exec(`DO $$ BEGIN
+		IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_message_replies_message') THEN
+			ALTER TABLE message_replies ADD CONSTRAINT fk_message_replies_message
+				FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE;
+		END IF;
+	END $$`)
+
+	db.Exec(`DO $$ BEGIN
+		CREATE INDEX IF NOT EXISTS idx_message_filters_lookup ON message_filters (workspace_id, enabled);
 	EXCEPTION WHEN others THEN NULL;
 	END $$`)
 }
@@ -94,9 +112,11 @@ func rebuildUniqueIndexes(db *gorm.DB) {
 		column  string
 	}
 
+	const colName = "name"
+
 	indexes := []indexDef{
-		{"templates", "idx_user_template", "idx_workspace_template", "name"},
-		{"style_sheets", "idx_user_stylesheet", "idx_workspace_stylesheet", "name"},
+		{"templates", "idx_user_template", "idx_workspace_template", colName},
+		{"style_sheets", "idx_user_stylesheet", "idx_workspace_stylesheet", colName},
 		{"contacts", "idx_user_email", "idx_workspace_email", "email"},
 		{"domains", "idx_user_domain", "idx_workspace_domain", "domain"},
 		{"languages", "idx_user_language", "idx_workspace_language", "code"},

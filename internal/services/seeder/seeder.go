@@ -1,25 +1,12 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package seeder
 
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/goposta/posta/internal/models"
@@ -68,6 +55,10 @@ type templateDef struct {
 
 // seedTemplate creates a single template with a version and one localization
 // per seedLanguages entry, loading each localized body from the embedded files.
+// sampleBrand fills the {{ company }} and {{ product }} placeholders in the
+// seeded templates' preview data.
+const sampleBrand = "Posta"
+
 func (s *Seeder) seedTemplate(workspaceID, userID uint, ssID uint, def templateDef) {
 	b, _ := json.MarshalIndent(def.SampleData, "", "  ")
 	sampleData := string(b)
@@ -125,11 +116,21 @@ func workspacePtr(workspaceID uint) *uint {
 	return &workspaceID
 }
 
+// sampleRecipientName fills {{ name }} in the seeded templates' preview data
+// when the owner's name is unknown. It greets, rather than naming a person who
+// has nothing to do with the installation.
+const sampleRecipientName = "there"
+
 func (s *Seeder) SeedWorkspaceDefaults(workspaceID, userID uint, userName string) {
+	userName = strings.TrimSpace(userName)
 	if userName == "" {
-		userName = "Jonas"
+		userName = sampleRecipientName
 	}
-	templates, total, err := s.templateRepo.FindByUserID(userID, 1, 0)
+	// Scoped to the workspace being seeded, not to the user. A user's second
+	// workspace needs its own defaults, and a re-run against an already-seeded
+	// workspace must not duplicate them.
+	scope := repositories.ResourceScope{UserID: userID, WorkspaceID: &workspaceID}
+	templates, total, err := s.templateRepo.FindByScope(scope, "", 1, 0)
 	if err != nil || total > 0 || len(templates) > 0 {
 		return
 	}
@@ -189,8 +190,8 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Welcome email introducing Posta and its features",
 			SampleData: okapi.M{
 				"name":    userName,
-				"product": "Posta",
-				"company": "Posta",
+				"product": sampleBrand,
+				"company": sampleBrand,
 				"year":    year,
 				"docs":    docsURL,
 				"features": []string{
@@ -229,7 +230,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Transactional email for password reset requests",
 			SampleData: okapi.M{
 				"name":      userName,
-				"company":   "Posta",
+				"company":   sampleBrand,
 				"year":      year,
 				"resetLink": "https://example.com/reset?token=abc123",
 				"expiry":    "1 hour",
@@ -247,7 +248,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Order confirmation email with item details and total",
 			SampleData: okapi.M{
 				"name":        userName,
-				"company":     "Posta",
+				"company":     sampleBrand,
 				"year":        year,
 				"orderNumber": "10042",
 				"orderDate":   "April 21, 2026",
@@ -270,7 +271,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Monthly newsletter with articles and unsubscribe link",
 			SampleData: okapi.M{
 				"name":    userName,
-				"company": "Posta",
+				"company": sampleBrand,
 				"year":    year,
 				"month":   "April",
 				"articles": []map[string]string{
@@ -305,7 +306,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Confirm a new account's email address with a link and code",
 			SampleData: okapi.M{
 				"name":       userName,
-				"company":    "Posta",
+				"company":    sampleBrand,
 				"year":       year,
 				"verifyLink": "https://example.com/verify?token=abc123",
 				"code":       "492018",
@@ -324,7 +325,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "One-time passcode / magic-link login email",
 			SampleData: okapi.M{
 				"name":      userName,
-				"company":   "Posta",
+				"company":   sampleBrand,
 				"year":      year,
 				"code":      "731924",
 				"loginLink": "https://example.com/login?token=abc123",
@@ -343,7 +344,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Payment receipt with line items, subtotal, tax, and total",
 			SampleData: okapi.M{
 				"name":          userName,
-				"company":       "Posta",
+				"company":       sampleBrand,
 				"year":          year,
 				"invoiceNumber": "INV-2042",
 				"invoiceDate":   "April 21, 2026",
@@ -369,7 +370,7 @@ func defaultTemplateDefs(userName string, year int, docsURL string) []templateDe
 			Description: "Invite a user to a workspace with an accept link and role",
 			SampleData: okapi.M{
 				"name":          userName,
-				"company":       "Posta",
+				"company":       sampleBrand,
 				"year":          year,
 				"inviterName":   "Jonas",
 				"workspaceName": "Acme Marketing",

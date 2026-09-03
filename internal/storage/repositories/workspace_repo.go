@@ -1,19 +1,5 @@
-/*
- * Copyright 2026 Jonas Kaninda
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
+// SPDX-FileCopyrightText: 2026 Jonas Kaninda
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 package repositories
 
@@ -79,17 +65,49 @@ func (r *WorkspaceRepository) FindAll() ([]models.Workspace, error) {
 	return workspaces, nil
 }
 
-// FindByUserID returns all workspaces the user is a member of.
+// FindByUserID returns all workspaces the user is a member of. The system
+// workspace sorts last so it never displaces a real one at the top of a list.
 func (r *WorkspaceRepository) FindByUserID(userID uint) ([]models.Workspace, error) {
 	var workspaces []models.Workspace
 	if err := r.db.
 		Joins("JOIN workspace_members ON workspace_members.workspace_id = workspaces.id").
 		Where("workspace_members.user_id = ?", userID).
-		Order("workspaces.created_at DESC").
+		Order("workspaces.system ASC, workspaces.created_at DESC").
 		Find(&workspaces).Error; err != nil {
 		return nil, err
 	}
 	return workspaces, nil
+}
+
+// FindSystem returns the built-in platform workspace.
+func (r *WorkspaceRepository) FindSystem() (*models.Workspace, error) {
+	var ws models.Workspace
+	if err := r.db.Where("system = ?", true).First(&ws).Error; err != nil {
+		return nil, err
+	}
+	return &ws, nil
+}
+
+// SlugExists reports whether slug is taken by a workspace other than excludeID.
+func (r *WorkspaceRepository) SlugExists(slug string, excludeID uint) bool {
+	var count int64
+	q := r.db.Model(&models.Workspace{}).Where("slug = ?", slug)
+	if excludeID > 0 {
+		q = q.Where("id <> ?", excludeID)
+	}
+	q.Count(&count)
+	return count > 0
+}
+
+// CountNonSystemMemberships returns how many ordinary workspaces the user
+// belongs to. Used to refuse deleting somebody's last workspace.
+func (r *WorkspaceRepository) CountNonSystemMemberships(userID uint) int64 {
+	var count int64
+	r.db.Model(&models.WorkspaceMember{}).
+		Joins("JOIN workspaces ON workspaces.id = workspace_members.workspace_id").
+		Where("workspace_members.user_id = ? AND workspaces.system = ?", userID, false).
+		Count(&count)
+	return count
 }
 
 // AddMember adds a user as a member of a workspace.
