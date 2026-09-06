@@ -57,8 +57,10 @@ services:
     environment:
       POSTFIX_myhostname: "mail.thescene.co.in"
       POSTFIX_mydomain: "thescene.co.in"
-      POSTFIX_custom_user: "posta:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
-      ALLOWED_NETWORKS: "172.16.0.0/12 10.0.0.0/8 127.0.0.0/8 192.168.0.0/16"
+      ALLOW_EMPTY_SENDER_DOMAINS: "true"
+      ALLOWED_SENDER_DOMAINS: "thescene.co.in"
+      SMTPD_SASL_USERS: "posta:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!},posta@thescene.co.in:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
+      ALLOWED_NETWORKS: "172.16.0.0/12,10.0.0.0/8,127.0.0.0/8,192.168.0.0/16"
     ports:
       - "587:587"
       - "25:25"
