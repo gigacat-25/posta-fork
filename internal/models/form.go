@@ -77,7 +77,7 @@ type Form struct {
 	UpdatedAt     *time.Time     `json:"updated_at,omitempty"`
 	DeletedAt     gorm.DeletedAt `json:"-" gorm:"index"`
 
-	LastEditedBy *ActorRef `json:"last_edited_by,omitempty" gorm:"foreignKey:LastEditedByID;references:ID;constraint:false"`
+	LastEditedBy *ActorRef `json:"last_edited_by,omitempty" gorm:"->;foreignKey:LastEditedByID;references:ID;constraint:false"`
 }
 
 func (f *Form) IsActive() bool { return f.Status == FormStatusActive }

@@ -20,6 +20,7 @@ import (
 	"github.com/goposta/posta/internal/services/emailverify"
 	"github.com/goposta/posta/internal/services/eventbus"
 	"github.com/goposta/posta/internal/services/inbound"
+	"github.com/goposta/posta/internal/services/inbox"
 	"github.com/goposta/posta/internal/services/messages"
 	"github.com/goposta/posta/internal/services/notification"
 	"github.com/goposta/posta/internal/services/passwordreset"
@@ -97,6 +98,9 @@ type routerHandlers struct {
 	server           *handlers.ServerHandler
 	event            *handlers.EventHandler
 	analytics        *handlers.AnalyticsHandler
+	adminDomain      *handlers.AdminDomainHandler
+	notification     *handlers.NotificationHandler
+	announcement     *handlers.AdminAnnouncementHandler
 	setting          *handlers.SettingHandler
 	userSetting      *handlers.UserSettingHandler
 	workspaceSetting *handlers.WorkspaceSettingHandler
@@ -131,6 +135,7 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 	serverRepo := repositories.NewServerRepository(db)
 	webhookRepo := repositories.NewWebhookRepository(db)
 	domainRepo := repositories.NewDomainRepository(db)
+	notificationRepo := repositories.NewNotificationRepository(db)
 	bounceRepo := repositories.NewBounceRepository(db)
 	suppressionRepo := repositories.NewSuppressionRepository(db)
 	unsubListRepo := repositories.NewUnsubscribeListRepository(db)
@@ -154,6 +159,7 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 	// Services
 	bus := eventbus.New(eventRepo)
 	auditLogger := audit.NewLogger(bus)
+	inboxService := inbox.NewService(db, notificationRepo)
 	apiKeyService := auth.NewAPIKeyService(apiKeyRepo)
 	settingsProvider := settings.NewProvider(settingRepo)
 	planRepo := repositories.NewPlanRepository(db)
@@ -252,6 +258,9 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 			webhookDelivery:  handlers.NewWebhookDeliveryHandler(webhookDeliveryRepo),
 			dashboard:        handlers.NewDashboardHandler(db, statsCache, webhookDeliveryRepo),
 			domain:           handlers.NewDomainHandler(domainRepo),
+			adminDomain:      handlers.NewAdminDomainHandler(db, domainRepo, auditLogger),
+			notification:     handlers.NewNotificationHandler(notificationRepo, inboxService),
+			announcement:     handlers.NewAdminAnnouncementHandler(db, inboxService, auditLogger),
 			bounce:           handlers.NewBounceHandler(bounceRepo, suppressionRepo, emailRepo, dispatcher),
 			suppression:      handlers.NewSuppressionHandler(suppressionRepo, unsubListRepo),
 			unsubscribeList:  handlers.NewUnsubscribeListHandler(unsubListRepo),
@@ -307,6 +316,7 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 		Inbound:  cfg.InboundEnabled,
 		Relay:    cfg.SMTPRelayEnabled,
 	})
+	r.h.dashboard.SetInbox(inboxService)
 
 	// Email content privacy
 	r.h.email.SetSettings(settingsProvider)

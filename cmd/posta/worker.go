@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"time"
 
 	"github.com/goposta/posta/internal/config"
 	"github.com/goposta/posta/internal/cron/jobs"
@@ -207,10 +209,32 @@ func runWorker() error {
 	// Publish worker's build info
 	workermon.StartHeartbeat(context.Background(), cfg.Redis.Client, config.Version, config.CommitID)
 
+	var healthSrv *worker.HealthServer
+	if cfg.WorkerHealthEnabled {
+		addr := fmt.Sprintf(":%d", cfg.WorkerHealthPort)
+		healthSrv = worker.NewHealthServer(addr, db, cfg.Redis.Client)
+		stop := healthSrv.Start()
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			stop(ctx)
+		}()
+		logger.Info("worker health endpoints listening",
+			"addr", addr, "paths", "/healthz /readyz /metrics")
+	}
+
 	logger.Info("Posta worker started",
 		"version", config.Version,
 		"concurrency", cfg.WorkerConcurrency,
 	)
+
+	// Readiness flips before Run blocks and back once it returns, so a draining
+	// or stopped worker stops advertising itself as ready and an orchestrator
+	// routes nothing new at it.
+	if healthSrv != nil {
+		healthSrv.SetProcessing(true)
+		defer healthSrv.SetProcessing(false)
+	}
 
 	return srv.Run(mux)
 }

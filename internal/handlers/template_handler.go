@@ -6,6 +6,7 @@ package handlers
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -101,23 +102,14 @@ func (h *TemplateHandler) Create(c *okapi.Context, req *CreateTemplateRequest) e
 		LastEditedByID:  &scope.UserID,
 	}
 
-	if err := h.repo.Create(tmpl); err != nil {
-		return c.AbortConflict("template name already exists")
+	err := h.repo.CreateWithVersions(tmpl, []repositories.ImportVersion{
+		{SampleData: req.Body.SampleData, IsActive: true},
+	})
+	if repositories.IsDuplicateName(err) {
+		return c.AbortConflict("a template named \"" + tmpl.Name + "\" already exists in this workspace")
 	}
-
-	// Create default version v1 and set it as active
-	v := &models.TemplateVersion{
-		TemplateID: tmpl.ID,
-		Version:    1,
-		SampleData: req.Body.SampleData,
-	}
-	if err := h.versionRepo.Create(v); err != nil {
-		return c.AbortInternalServerError("failed to create default version")
-	}
-
-	tmpl.ActiveVersionID = &v.ID
-	if err := h.repo.Update(tmpl); err != nil {
-		return c.AbortInternalServerError("failed to activate default version")
+	if err != nil {
+		return c.AbortInternalServerError("failed to create template")
 	}
 
 	return created(c, tmpl)
@@ -151,6 +143,9 @@ func (h *TemplateHandler) Update(c *okapi.Context, req *UpdateTemplateRequest) e
 	tmpl.LastEditedByID = &editorID
 
 	if err := h.repo.Update(tmpl); err != nil {
+		if repositories.IsDuplicateName(err) {
+			return c.AbortConflict("a template named \"" + tmpl.Name + "\" already exists in this workspace")
+		}
 		return c.AbortInternalServerError("failed to update template")
 	}
 
@@ -162,6 +157,11 @@ func (h *TemplateHandler) Update(c *okapi.Context, req *UpdateTemplateRequest) e
 	return ok(c, tmpl)
 }
 
+type TemplateListItem struct {
+	models.Template
+	Languages []string `json:"languages"`
+}
+
 func (h *TemplateHandler) List(c *okapi.Context, req *ListTemplatesRequest) error {
 	page, size, offset := normalizePageParams(req.Page, req.Size)
 
@@ -170,7 +170,26 @@ func (h *TemplateHandler) List(c *okapi.Context, req *ListTemplatesRequest) erro
 		return c.AbortInternalServerError("failed to list templates")
 	}
 
-	return paginated(c, templates, total, page, size)
+	ids := make([]uint, 0, len(templates))
+	for i := range templates {
+		ids = append(ids, templates[i].ID)
+	}
+	// One aggregate for the page rather than a query per row.
+	languages, err := h.repo.LanguagesForActiveVersions(ids)
+	if err != nil {
+		return c.AbortInternalServerError("failed to list templates")
+	}
+
+	items := make([]TemplateListItem, 0, len(templates))
+	for i := range templates {
+		langs := languages[templates[i].ID]
+		if langs == nil {
+			langs = []string{}
+		}
+		items = append(items, TemplateListItem{Template: templates[i], Languages: langs})
+	}
+
+	return paginated(c, items, total, page, size)
 }
 
 func (h *TemplateHandler) Get(c *okapi.Context, req *GetTemplateRequest) error {
@@ -264,6 +283,7 @@ type ExportLocalization struct {
 	SubjectTemplate string `json:"subject_template"`
 	HTMLTemplate    string `json:"html_template"`
 	TextTemplate    string `json:"text_template"`
+	BuilderJSON     string `json:"builder_json,omitempty"`
 }
 
 type ExportVersion struct {
@@ -313,6 +333,7 @@ func (h *TemplateHandler) Export(c *okapi.Context, req *ExportTemplateRequest) e
 				SubjectTemplate: l.SubjectTemplate,
 				HTMLTemplate:    l.HTMLTemplate,
 				TextTemplate:    l.TextTemplate,
+				BuilderJSON:     l.BuilderJSON,
 			})
 		}
 
@@ -366,66 +387,38 @@ func (h *TemplateHandler) Import(c *okapi.Context, req *ImportTemplateRequest) e
 		DefaultLanguage: defaultLang,
 		Description:     data.Description,
 		SampleData:      data.SampleData,
+		LastEditedByID:  &scope.UserID,
 	}
 
-	if err := h.repo.Create(tmpl); err != nil {
-		return c.AbortConflict("template name already exists")
-	}
-
-	var activeVersionDBID *uint
-
+	versions := make([]repositories.ImportVersion, 0, len(data.Versions))
 	for _, ev := range data.Versions {
-		nextVersion, err := h.versionRepo.NextVersion(tmpl.ID)
-		if err != nil {
-			return c.AbortInternalServerError("failed to determine next version")
-		}
-
-		v := &models.TemplateVersion{
-			TemplateID:   tmpl.ID,
-			Version:      nextVersion,
-			SampleData:   ev.SampleData,
-			StyleSheetID: findOrCreateStyleSheet(ev.StyleSheet, scope, h.stylesheetRepo),
-		}
-		if err := h.versionRepo.Create(v); err != nil {
-			return c.AbortInternalServerError(fmt.Sprintf("failed to create version %d", ev.Version))
-		}
-
-		if ev.IsActive {
-			activeVersionDBID = &v.ID
-		}
-
+		locs := make([]repositories.ImportLocalization, 0, len(ev.Localizations))
 		for _, el := range ev.Localizations {
-			l := &models.TemplateLocalization{
-				VersionID:       v.ID,
+			locs = append(locs, repositories.ImportLocalization{
 				Language:        el.Language,
 				SubjectTemplate: el.SubjectTemplate,
 				HTMLTemplate:    el.HTMLTemplate,
 				TextTemplate:    el.TextTemplate,
-			}
-			if err := h.localizationRepo.Create(l); err != nil {
-				return c.AbortInternalServerError(fmt.Sprintf("failed to create localization %s for version %d", el.Language, ev.Version))
-			}
+				BuilderJSON:     el.BuilderJSON,
+			})
 		}
+		versions = append(versions, repositories.ImportVersion{
+			SampleData:    ev.SampleData,
+			StyleSheetID:  findOrCreateStyleSheet(ev.StyleSheet, scope, h.stylesheetRepo),
+			IsActive:      ev.IsActive,
+			Localizations: locs,
+		})
+	}
+	if len(versions) == 0 {
+		versions = append(versions, repositories.ImportVersion{SampleData: data.SampleData, IsActive: true})
 	}
 
-	// If no versions were imported, create a default v1
-	if len(data.Versions) == 0 {
-		v := &models.TemplateVersion{
-			TemplateID: tmpl.ID,
-			Version:    1,
-			SampleData: data.SampleData,
-		}
-		if err := h.versionRepo.Create(v); err != nil {
-			return c.AbortInternalServerError("failed to create default version")
-		}
-		activeVersionDBID = &v.ID
+	err := h.repo.CreateWithVersions(tmpl, versions)
+	if repositories.IsDuplicateName(err) {
+		return c.AbortConflict("a template named \"" + tmpl.Name + "\" already exists in this workspace")
 	}
-
-	if activeVersionDBID != nil {
-		tmpl.ActiveVersionID = activeVersionDBID
-		if err := h.repo.Update(tmpl); err != nil {
-			return c.AbortInternalServerError("failed to activate version")
-		}
+	if err != nil {
+		return c.AbortInternalServerError("failed to import template")
 	}
 
 	return created(c, tmpl)
@@ -468,9 +461,9 @@ func (h *TemplateHandler) ImportHTML(c *okapi.Context) error {
 		return c.AbortBadRequest("file is empty")
 	}
 
-	// Derive template name from filename
-	name := strings.TrimSuffix(lower, ".html")
-	name = strings.TrimSuffix(name, ".htm")
+	// Derive the template name from the filename, keeping its capitalisation:
+	// the lowercased copy is only there to match the extension.
+	name := filename[:len(filename)-len(filepath.Ext(filename))]
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return c.AbortBadRequest("could not derive template name from filename")
@@ -492,7 +485,8 @@ func (h *TemplateHandler) ImportHTML(c *okapi.Context) error {
 		defaultLang = defLang.Code
 	}
 
-	// Create template
+	stylesheetID := h.resolveImportedStyleSheet(scope, name, css, linkNames)
+
 	tmpl := &models.Template{
 		UserID:          scope.UserID,
 		WorkspaceID:     scope.WorkspaceID,
@@ -500,39 +494,24 @@ func (h *TemplateHandler) ImportHTML(c *okapi.Context) error {
 		DefaultLanguage: defaultLang,
 		Description:     fmt.Sprintf("Imported from %s", filename),
 		SampleData:      "{}",
-	}
-	if err := h.repo.Create(tmpl); err != nil {
-		return c.AbortConflict("template with this name already exists")
+		LastEditedByID:  &scope.UserID,
 	}
 
-	stylesheetID := h.resolveImportedStyleSheet(scope, name, css, linkNames)
-
-	// Create version v1
-	v := &models.TemplateVersion{
-		TemplateID:   tmpl.ID,
-		Version:      1,
+	err = h.repo.CreateWithVersions(tmpl, []repositories.ImportVersion{{
 		SampleData:   "{}",
 		StyleSheetID: stylesheetID,
+		IsActive:     true,
+		Localizations: []repositories.ImportLocalization{{
+			Language:        defaultLang,
+			SubjectTemplate: subject,
+			HTMLTemplate:    body,
+		}},
+	}})
+	if repositories.IsDuplicateName(err) {
+		return c.AbortConflict("a template named \"" + name + "\" already exists in this workspace")
 	}
-	if err := h.versionRepo.Create(v); err != nil {
-		return c.AbortInternalServerError("failed to create template version")
-	}
-
-	// Set active version
-	tmpl.ActiveVersionID = &v.ID
-	if err := h.repo.Update(tmpl); err != nil {
-		return c.AbortInternalServerError("failed to activate version")
-	}
-
-	// Create default localization
-	loc := &models.TemplateLocalization{
-		VersionID:       v.ID,
-		Language:        defaultLang,
-		SubjectTemplate: subject,
-		HTMLTemplate:    body,
-	}
-	if err := h.localizationRepo.Create(loc); err != nil {
-		return c.AbortInternalServerError("failed to create localization")
+	if err != nil {
+		return c.AbortInternalServerError("failed to import template")
 	}
 
 	return created(c, tmpl)

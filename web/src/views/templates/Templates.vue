@@ -5,6 +5,7 @@ import { templatesApi } from "../../api/templates";
 import { languagesApi } from "../../api/languages";
 import type {
   Template,
+  TemplateListItem,
   TemplateInput,
   TemplateExport,
   Language,
@@ -14,6 +15,7 @@ import { useNotificationStore } from "../../stores/notification";
 import { useConfirm } from "../../composables/useConfirm";
 import { useModalSafeClose } from "../../composables/useModalSafeClose";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { apiMessage } from "../../composables/apiError";
 import { usePagination } from '@/composables/usePagination'
 import Pagination from '@/components/Pagination.vue'
 import TemplateModal from "@/components/TemplateModal.vue";
@@ -23,7 +25,7 @@ const notify = useNotificationStore();
 const wsStore = useWorkspaceStore();
 const { confirm } = useConfirm();
 
-const templates = ref<Template[]>([]);
+const templates = ref<TemplateListItem[]>([]);
 const loading = ref(true);
 const search = ref("");
 let searchTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -82,8 +84,8 @@ const { pageable, goToPage } = usePagination(async (page) => {
     const res = await templatesApi.list(page, pageable.value.size, search.value);
     templates.value = res.data.data;
     pageable.value = res.data.pageable;
-  } catch (e) {
-    console.error('Failed to load templates', e)
+  } catch (e: any) {
+    notify.error(apiMessage(e, 'Failed to load templates'))
   } finally {
     loading.value = false
   }
@@ -106,9 +108,9 @@ async function saveTemplate() {
     }
     closeModal();
     await goToPage(pageable.value.current_page);
-  } catch {
+  } catch (e: any) {
     notify.error(
-      editing.value ? "Failed to update template" : "Failed to create template"
+      apiMessage(e, editing.value ? "Failed to update template" : "Failed to create template")
     );
   } finally {
     saving.value = false;
@@ -127,8 +129,8 @@ async function deleteTemplate(template: Template) {
     await templatesApi.delete(template.id);
     notify.success("Template deleted");
     await goToPage(pageable.value.current_page);
-  } catch {
-    notify.error("Failed to delete template");
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to delete template"));
   }
 }
 
@@ -144,8 +146,8 @@ async function exportTemplate(template: Template) {
     a.click();
     URL.revokeObjectURL(url);
     notify.success("Template exported");
-  } catch {
-    notify.error("Failed to export template");
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to export template"));
   }
 }
 
@@ -175,10 +177,7 @@ async function handleImportFile(event: Event) {
     }
     await goToPage(pageable.value.current_page);
   } catch (e: any) {
-    const msg =
-      e?.response?.data?.message ||
-      "Failed to import template. Please check the file format.";
-    notify.error(msg);
+    notify.error(apiMessage(e, "Failed to import template. Check the file format."));
   } finally {
     importing.value = false;
     input.value = "";
@@ -263,9 +262,9 @@ onMounted(() => {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Language</th>
-                  <th>Active Version</th>
-                  <th>Created</th>
+                  <th>Languages</th>
+                  <th>Version</th>
+                  <th>Last edited</th>
                   <th>Actions</th>
                 </tr>
               </thead>
@@ -285,28 +284,37 @@ onMounted(() => {
                     </div>
                   </td>
                   <td>
-                    <span class="badge badge-neutral">{{ tmpl.default_language }}</span>
+                    <div class="langs">
+                      <span
+                        v-for="lang in tmpl.languages"
+                        :key="lang"
+                        class="badge"
+                        :class="lang === tmpl.default_language ? 'badge-success' : 'badge-neutral'"
+                        :title="lang === tmpl.default_language ? 'Default language' : ''"
+                      >
+                        {{ lang }}
+                      </span>
+                      <span v-if="!tmpl.languages.length" class="text-muted text-sm">
+                        No content yet
+                      </span>
+                    </div>
                   </td>
                   <td>
-                    <span v-if="tmpl.active_version_id" class="badge badge-success"
-                      >v{{ tmpl.active_version?.version || "?" }}</span
-                    >
-                    <span v-else class="text-muted">&mdash;</span>
+                    <span v-if="tmpl.active_version" class="badge badge-neutral">
+                      v{{ tmpl.active_version.version }}
+                    </span>
+                    <span v-else class="text-muted" title="This template cannot be sent until a version is active">
+                      &mdash;
+                    </span>
                   </td>
-                  <td>{{ formatDate(tmpl.created_at) }}</td>
+                  <td>
+                    <div>{{ formatDate(tmpl.updated_at || tmpl.created_at) }}</div>
+                    <div v-if="tmpl.last_edited_by?.name" class="text-muted text-sm">
+                      by {{ tmpl.last_edited_by.name }}
+                    </div>
+                  </td>
                   <td>
                     <div class="flex gap-2">
-                      <button
-                        class="btn btn-primary btn-sm"
-                        @click.stop="
-                          router.push({
-                            name: 'template-detail',
-                            params: { id: tmpl.id },
-                          })
-                        "
-                      >
-                        Versions
-                      </button>
                       <button
                         class="btn btn-secondary btn-sm"
                         @click.stop="
@@ -357,3 +365,12 @@ onMounted(() => {
    
   </div>
 </template>
+
+<style scoped>
+.langs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  max-width: 220px;
+}
+</style>

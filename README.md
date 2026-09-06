@@ -39,6 +39,7 @@
 - **Outbound** — send transactional and marketing email over your own SMTP, with templates, localization, campaigns, subscriber lists, bounce and complaint handling, and delivery analytics.
 - **Inbound** — receive email at your domains, parse messages and attachments, and forward the structured payloads to your application via webhooks.
 - **Relay** — point an existing SMTP client at Posta and its mail flows through the same outbound pipeline as the API, so you can migrate to the HTTP API at your own pace.
+- **Forms** — let a website contact form post straight to Posta, scan each submission for spam, and reply to the sender from the dashboard through the same domains and suppression list as everything else.
 
 It is designed as a fully self-hostable alternative to services like SendGrid, Mailgun, and Postmark — giving you complete ownership of your email infrastructure, data, and deliverability.
 
@@ -75,6 +76,19 @@ Response:
 }
 ```
 
+Receive a website form submission — no JavaScript, no backend of your own:
+
+```html
+<form action="http://localhost:9000/api/v1/f/YOUR_FORM_KEY" method="POST">
+  <input type="email" name="email" required>
+  <textarea name="message" required></textarea>
+  <button type="submit">Send</button>
+</form>
+```
+
+The submission is scanned, stored, and shown in the dashboard, where a person
+replies to the sender. There is no auto-responder.
+
 ---
 
 ## Core Features
@@ -98,6 +112,18 @@ Response:
 * Spam scoring & retry on failure
 * Real-time SSE stream for inbound notifications
 
+### Web Form Messages
+
+* Public ingest endpoint per form — `POST /api/v1/f/{key}`, no API key on the page
+* Accepts plain HTML form posts, JSON, and multipart uploads; works without JavaScript
+* Origin allowlist, honeypot field, single-use nonces, and per-IP, per-form, per-sender and per-workspace rate limits
+* Spam scanning with a score, the reasons behind it, and an action ladder — allow, flag, quarantine, reject
+* Workspace spam filters by keyword, phrase, regex, email, domain, or IP, with a dry-run before you commit
+* Manual replies from the dashboard through the normal sending pipeline — no auto-responder
+* Inbox states, assignment, attachments, and a live event stream
+* Immediate, hourly, or daily digest notifications to the addresses each form nominates
+* Off by default behind `POSTA_MESSAGES_ENABLED`
+
 ### Email Relay
 
 * Point an existing SMTP client at Posta — no code changes
@@ -110,9 +136,10 @@ Response:
 ### Templates
 
 * Versioned and multi-language templates
+* Drag-and-drop visual email builder, or a code editor with syntax highlighting and a live preview
 * Variable substitution and stylesheet inlining
 * System variables for web view and one-click unsubscribe links
-* Import/export and preview support
+* Import/export, HTML file import, and desktop/mobile preview
 
 ### Campaigns
 
@@ -173,14 +200,19 @@ Response:
 
 ### Analytics & Monitoring
 
-* Email delivery, open, and click metrics
+* Email delivery, open, and click metrics, compared against the preceding period
+* Delivery and bounce trends, plus time-to-deliver percentiles
+* Deliverability broken down by recipient mailbox provider — Gmail, Outlook, Yahoo, and the rest
+* CSV export of any report
 * Prometheus integration
 * Health endpoints and daily reports
 
 ### Admin Platform
 
 * User and API key management
-* Global metrics and logs
+* Platform dashboard, metrics, and logs
+* Domains across every workspace, with a manual ownership override for the cases DNS cannot settle
+* Announcements broadcast to every user's in-app inbox, retractable after the fact
 * SMTP pool management
 * Usage plans with quotas and per-workspace assignment
 * OAuth/SSO provider configuration
@@ -189,7 +221,8 @@ Response:
 ### Dashboard
 
 * Vue-based UI for managing all resources
-* Analytics, templates, SMTP, domains, contacts, campaigns, and logs
+* Analytics, templates, SMTP, domains, contacts, campaigns, messages, and logs
+* Per-user notification inbox with dismissible workspace health alerts
 * Dark/light mode and user preferences
 
 ---
@@ -205,6 +238,7 @@ can run as many workers as your send volume needs.
 flowchart LR
     App["Your app<br/>REST API / SMTP client"]
     MX["Inbound mail<br/>MX delivery"]
+    Form["Website form<br/>POST /api/v1/f/{key}"]
 
     subgraph posta["Posta"]
         Server["<b>posta</b><br/>HTTP API :9000 · Dashboard<br/>Inbound SMTP :2525 · Relay :2526"]
@@ -223,6 +257,7 @@ flowchart LR
 
     App --> Server
     MX --> Server
+    Form --> Server
     Server -- enqueue --> Redis
     Redis -- dequeue --> W1
     Redis -- dequeue --> W2
@@ -257,7 +292,7 @@ server and its workers.
 
 ## Requirements
 
-* Go 1.25+
+* Go 1.27+
 * PostgreSQL
 * Redis
 

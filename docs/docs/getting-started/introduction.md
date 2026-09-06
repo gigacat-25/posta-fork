@@ -47,26 +47,13 @@ Running locally with the default port, that is [http://localhost:9000/docs](http
 
 ## Architecture
 
-Posta is built with:
+Posta ships as a single binary that runs in two modes: `posta` serves the HTTP
+API, dashboard, and SMTP listeners, while `posta worker` consumes the job queue.
+Both are stateless, with all state in PostgreSQL, Redis, and optional object
+storage, so workers scale out horizontally.
 
-- **Go** backend using the Okapi web framework
-- **PostgreSQL** for persistent storage
-- **Redis** for job queues (via Asynq) and caching
-- **Vue 3** dashboard (embedded or standalone)
-
-```
-┌─────────────┐     ┌─────────────┐     ┌──────────────┐
-│  Your App   │────▶│  Posta API  │────▶│  PostgreSQL  │
-│  (SDK/HTTP) │     │  (Go)       │     └──────────────┘
-└─────────────┘     │             │     ┌──────────────┐
-                    │             │────▶│  Redis       │
-                    └──────┬──────┘     └──────────────┘
-                           │
-                    ┌──────▼──────┐     ┌──────────────┐
-                    │   Worker    │────▶│  SMTP Server │
-                    │  (Asynq)   │     └──────────────┘
-                    └─────────────┘
-```
+See [Architecture](/docs/getting-started/architecture) for the full picture —
+what each process does, how the queues are split, and how to deploy them.
 
 ## Next Steps
 
@@ -74,3 +61,4 @@ Posta is built with:
 - [Installation](/docs/getting-started/installation) — Deploy Posta with Docker or from source
 - [Configuration](/docs/getting-started/configuration) — Configure environment variables
 - [Quick Start](/docs/getting-started/quickstart) — Send your first email in minutes
+- [Architecture](/docs/getting-started/architecture) — How the pieces fit together and how to deploy them

@@ -46,23 +46,65 @@ func walkEnumTags(t *testing.T, typ reflect.Type, path string) {
 	}
 }
 
+// enumCheckedRequests are the request structs the binding guards walk. Add new
+// request types here.
+var enumCheckedRequests = []any{
+	CreateFormRequest{},
+	UpdateFormRequest{},
+	FormIDRequest{},
+	MessageListRequest{},
+	UpdateMessageStateRequest{},
+	AssignMessageRequest{},
+	MarkSpamRequest{},
+	ReplyMessageRequest{},
+	MessageAnalyticsRequest{},
+	CreateMessageFilterRequest{},
+	UpdateMessageFilterRequest{},
+	TestMessageFilterRequest{},
+	AdminListDomainsRequest{},
+	AdminSetDomainVerificationRequest{},
+	ListNotificationsRequest{},
+	CreateAnnouncementRequest{},
+	NotificationIDsRequest{},
+}
+
 func TestRequestEnumTagsOnlyOnStrings(t *testing.T) {
-	requests := []any{
-		CreateFormRequest{},
-		UpdateFormRequest{},
-		FormIDRequest{},
-		MessageListRequest{},
-		UpdateMessageStateRequest{},
-		AssignMessageRequest{},
-		MarkSpamRequest{},
-		ReplyMessageRequest{},
-		MessageAnalyticsRequest{},
-		CreateMessageFilterRequest{},
-		UpdateMessageFilterRequest{},
-		TestMessageFilterRequest{},
-	}
-	for _, req := range requests {
+	for _, req := range enumCheckedRequests {
 		assertEnumTagsAreStrings(t, req)
+	}
+}
+
+// okapi resolves a request's body by looking for a field named Body or tagged
+// json:"body", then calls Bind on that field — which applies the same rule to
+// the body's own fields. A payload with a field called "body" therefore binds as
+// an empty struct: no JSON is decoded, and the failure surfaces as every
+// required field being missing rather than as anything pointing at the cause.
+//
+// This walks the same request structs and fails on the shape that triggers it.
+func TestRequestBodiesHaveNoBodyField(t *testing.T) {
+	for _, req := range enumCheckedRequests {
+		typ := reflect.TypeOf(req)
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if field.Name != "Body" && field.Tag.Get("json") != "body" {
+				continue
+			}
+			body := field.Type
+			for body.Kind() == reflect.Pointer {
+				body = body.Elem()
+			}
+			if body.Kind() != reflect.Struct {
+				continue
+			}
+			for j := 0; j < body.NumField(); j++ {
+				inner := body.Field(j)
+				if inner.Name == "Body" || inner.Tag.Get("json") == "body" {
+					t.Errorf("%s.Body.%s is named Body or tagged json:\"body\"; okapi will treat it "+
+						"as another body envelope and bind nothing, so every request to this endpoint "+
+						"fails with the required fields missing", typ.Name(), inner.Name)
+				}
+			}
+		}
 	}
 }
 

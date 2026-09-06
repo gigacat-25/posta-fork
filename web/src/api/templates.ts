@@ -3,6 +3,7 @@ import type {
   ApiResponse,
   PaginatedResponse,
   Template,
+  TemplateListItem,
   TemplateInput,
   TemplateExport,
   TemplatePreview,
@@ -16,7 +17,7 @@ import type {
 
 export const templatesApi = {
   list(page = 0, size = 20, search = '') {
-    return api.get<PaginatedResponse<Template>>('/workspaces/current/templates', { params: { page, size, search } })
+    return api.get<PaginatedResponse<TemplateListItem>>('/workspaces/current/templates', { params: { page, size, search } })
   },
   get(id: number) {
     return api.get<ApiResponse<Template>>(`/workspaces/current/templates/${id}`)

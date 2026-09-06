@@ -200,6 +200,74 @@ func (r *Router) userRoutes() []okapi.RouteDefinition {
 			Request:     &handlers.UpdateUserSettingsRequest{},
 			Response:    &dto.Response[models.UserSetting]{},
 		},
+
+		// In-app inbox. These sit under /users/me because a notification is
+		// addressed to a person, not to a workspace: read and dismissed state
+		// follow the user across every workspace they belong to.
+		{
+			Method:      http.MethodGet,
+			Path:        pathNotifications,
+			Handler:     okapi.H(r.h.notification.List),
+			Group:       userGroup,
+			Summary:     "List notifications",
+			Description: "The authenticated user's in-app inbox, newest first. Paginate with the `before` keyset cursor.",
+			Request:     &handlers.ListNotificationsRequest{},
+			Response:    &dto.Response[[]models.Notification]{},
+		},
+		{
+			Method:      http.MethodGet,
+			Path:        pathNotifications + "/counts",
+			Handler:     r.h.notification.Counts,
+			Group:       userGroup,
+			Summary:     "Get notification counts",
+			Description: "Unread count for the header bell, and how many live items the active workspace has.",
+			Response:    &dto.Response[handlers.NotificationCounts]{},
+		},
+		{
+			Method:      http.MethodGet,
+			Path:        pathNotifications + "/banner",
+			Handler:     r.h.notification.Banner,
+			Group:       userGroup,
+			Summary:     "List dashboard banner notifications",
+			Description: "Live, undismissed notifications for the active workspace, most severe first.",
+			Response:    &dto.Response[[]models.Notification]{},
+		},
+		{
+			Method:   http.MethodPost,
+			Path:     pathNotifications + "/read",
+			Handler:  okapi.H(r.h.notification.MarkRead),
+			Group:    userGroup,
+			Summary:  "Mark notifications read",
+			Request:  &handlers.NotificationIDsRequest{},
+			Response: &dto.Response[dto.MessageData]{},
+		},
+		{
+			Method:   http.MethodPost,
+			Path:     pathNotifications + "/read-all",
+			Handler:  r.h.notification.MarkAllRead,
+			Group:    userGroup,
+			Summary:  "Mark all notifications read",
+			Response: &dto.Response[dto.MessageData]{},
+		},
+		{
+			Method:      http.MethodPost,
+			Path:        pathNotifications + "/dismiss",
+			Handler:     okapi.H(r.h.notification.Dismiss),
+			Group:       userGroup,
+			Summary:     "Dismiss notifications",
+			Description: "Hides items from the dashboard banner. A dismissal is bound to the condition as it currently stands: if the condition materially changes the item resurfaces, so dismissing is not permanent silence.",
+			Request:     &handlers.NotificationIDsRequest{},
+			Response:    &dto.Response[dto.MessageData]{},
+		},
+		{
+			Method:      http.MethodPost,
+			Path:        pathNotifications + "/dismiss-all",
+			Handler:     r.h.notification.DismissAll,
+			Group:       userGroup,
+			Summary:     "Dismiss all notifications",
+			Description: "Clears the dashboard banner for the active workspace.",
+			Response:    &dto.Response[dto.MessageData]{},
+		},
 	}
 
 	return routes

@@ -1223,13 +1223,14 @@ func (s *Service) findTemplate(userID uint, workspaceID *uint, templateID *uint,
 		return nil, fmt.Errorf("template_id or template name is required")
 	}
 
-	if workspaceID != nil {
-		tmpl, err := s.templateRepo.FindByWorkspaceName(*workspaceID, name)
-		if err == nil {
-			return tmpl, nil
-		}
+	if workspaceID == nil {
+		return nil, fmt.Errorf("template %q not found: no active workspace", name)
 	}
-	return s.templateRepo.FindByName(userID, name)
+	tmpl, err := s.templateRepo.FindByWorkspaceName(*workspaceID, name)
+	if err != nil {
+		return nil, fmt.Errorf("template %q not found", name)
+	}
+	return tmpl, nil
 }
 
 // resolveAndRender resolves the template content using versioned localizations

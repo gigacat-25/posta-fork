@@ -297,6 +297,12 @@ func PrometheusMiddleware() okapi.Middleware {
 
 }
 
+// HTTPHandler returns the Prometheus handler for a plain net/http mux — the
+// dedicated worker, which has no okapi router.
+func HTTPHandler() http.Handler {
+	return promhttp.Handler()
+}
+
 // MetricsHandler returns the Prometheus metrics handler.
 func MetricsHandler() okapi.HandlerFunc {
 	handler := promhttp.Handler()

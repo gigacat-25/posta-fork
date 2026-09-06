@@ -6,6 +6,7 @@ import { useThemeStore } from '../stores/theme'
 import { useWorkspaceStore } from '../stores/workspace'
 import { infoApi, type AppInfo } from '../api/info'
 import { adminApi } from '../api/admin'
+import NotificationBell from '../components/NotificationBell.vue'
 import type { UpdateInfo } from '../api/types'
 import EmailVerificationBanner from '../components/EmailVerificationBanner.vue'
 
@@ -227,6 +228,8 @@ const navSections: NavSection[] = [
       { name: 'Users', path: '/admin/users', icon: 'users' },
       { name: 'Plans', path: '/admin/plans', icon: 'layers' },
       { name: 'Shared Servers', path: '/admin/servers', icon: 'server' },
+      { name: 'Domains', path: '/admin/domains', icon: 'globe' },
+      { name: 'Announcements', path: '/admin/announcements', icon: 'bell' },
       { name: 'OAuth', path: '/admin/oauth', icon: 'shield' },
       { name: 'Jobs', path: '/admin/jobs', icon: 'clock' },
       { name: 'Events', path: '/admin/events', icon: 'zap' },
@@ -343,6 +346,7 @@ function getIcon(name: string): string {
     'key': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M15.5 2.5l-2 2m1 1l-2 2-3-3 2-2m-3.18 3.18a4 4 0 10-5.64 5.64 4 4 0 005.64-5.64z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     'file-text': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M10.5 1.5H4.5a1.5 1.5 0 00-1.5 1.5v12a1.5 1.5 0 001.5 1.5h9a1.5 1.5 0 001.5-1.5V6l-4.5-4.5z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 1.5V6H15M12 9.75H6M12 12.75H6M7.5 6.75H6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     'server': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="2" width="14" height="5" rx="1.5" stroke="currentColor" stroke-width="1.5"/><rect x="2" y="11" width="14" height="5" rx="1.5" stroke="currentColor" stroke-width="1.5"/><circle cx="5" cy="4.5" r="0.75" fill="currentColor"/><circle cx="5" cy="13.5" r="0.75" fill="currentColor"/></svg>',
+    'bell': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M13.5 6a4.5 4.5 0 10-9 0c0 5.25-2.25 6.75-2.25 6.75h13.5S13.5 11.25 13.5 6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.3 15.75a1.5 1.5 0 01-2.6 0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     'globe': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.5"/><path d="M2 9h14M9 2a11.05 11.05 0 013 7 11.05 11.05 0 01-3 7 11.05 11.05 0 01-3-7 11.05 11.05 0 013-7z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     'link': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M7.5 10.5a3.75 3.75 0 005.3.45l2.25-2.25a3.75 3.75 0 00-5.3-5.3l-1.29 1.28" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 7.5a3.75 3.75 0 00-5.3-.45L2.96 9.3a3.75 3.75 0 005.3 5.3l1.28-1.28" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     'alert-triangle': '<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M7.86 2.87L1.21 14.25a1.31 1.31 0 001.14 1.97h13.3a1.31 1.31 0 001.14-1.97L10.14 2.87a1.31 1.31 0 00-2.28 0z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 6.75v3M9 12.75h.007" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -471,6 +475,7 @@ function getIcon(name: string): string {
           </button>
         </div>
         <div class="topbar-right">
+          <NotificationBell />
           <div class="user-menu" @click="userMenuOpen = !userMenuOpen">
             <div class="user-avatar">{{ user?.name?.charAt(0)?.toUpperCase() || '?' }}</div>
             <div class="user-menu-info">

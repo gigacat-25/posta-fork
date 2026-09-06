@@ -11,7 +11,7 @@ const config: Config = {
     v4: true,
   },
 
-  url: 'https://docs.posta.dev',
+  url: 'https://docs.goposta.dev',
   baseUrl: '/',
 
   organizationName: 'goposta',
@@ -23,6 +23,14 @@ const config: Config = {
     defaultLocale: 'en',
     locales: ['en'],
   },
+
+
+  // Mermaid powers the architecture diagram, which is the one page where a
+  // picture beats a paragraph.
+  markdown: {
+    mermaid: true,
+  },
+  themes: ['@docusaurus/theme-mermaid'],
 
   presets: [
     [
@@ -99,7 +107,7 @@ const config: Config = {
             },
             {
               label: 'Website',
-              href: 'https://posta.dev',
+              href: 'https://goposta.dev',
             },
           ],
         },

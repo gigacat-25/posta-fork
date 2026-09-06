@@ -84,7 +84,7 @@ type Message struct {
 	Attachments []InboundAttachmentMeta `json:"attachments,omitempty" gorm:"-"`
 
 	Form       *Form          `json:"form,omitempty" gorm:"foreignKey:FormID;constraint:false"`
-	AssignedTo *ActorRef      `json:"assigned_to,omitempty" gorm:"foreignKey:AssignedToID;references:ID;constraint:false"`
+	AssignedTo *ActorRef      `json:"assigned_to,omitempty" gorm:"->;foreignKey:AssignedToID;references:ID;constraint:false"`
 	Replies    []MessageReply `json:"replies,omitempty" gorm:"foreignKey:MessageID"`
 }
 
@@ -115,5 +115,5 @@ type MessageReply struct {
 
 	CreatedAt time.Time `json:"created_at"`
 
-	Author *ActorRef `json:"author,omitempty" gorm:"foreignKey:AuthorID;references:ID;constraint:false"`
+	Author *ActorRef `json:"author,omitempty" gorm:"->;foreignKey:AuthorID;references:ID;constraint:false"`
 }

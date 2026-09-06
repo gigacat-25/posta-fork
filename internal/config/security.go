@@ -175,6 +175,13 @@ func (c *Config) workerProblems() []secretProblem {
 			true,
 		})
 	}
+	if c.WorkerHealthEnabled && (c.WorkerHealthPort <= 0 || c.WorkerHealthPort > 65535) {
+		problems = append(problems, secretProblem{
+			"POSTA_WORKER_HEALTH_PORT",
+			fmt.Sprintf("is %d, which is not a usable port, so the worker would expose no probes or metrics", c.WorkerHealthPort),
+			true,
+		})
+	}
 	if c.MessagesEnabled && !c.SystemSMTP.IsConfigured() {
 		problems = append(problems, secretProblem{
 			"POSTA_SYSTEM_SMTP_HOST",

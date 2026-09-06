@@ -11,12 +11,17 @@ package routes
 // They live together because goconst counts occurrences per package, not per
 // file, and several are shared across route files.
 const (
-	pathBounces      = "/bounces"
-	pathSettings     = "/settings"
-	pathSuppressions = "/suppressions"
-	pathWebhooks     = "/webhooks"
+	pathBounces       = "/bounces"
+	pathNotifications = "/notifications"
+	pathAnnouncements = "/announcements"
+	pathDomains       = "/domains"
+	pathSettings      = "/settings"
+	pathSuppressions  = "/suppressions"
+	pathWebhooks      = "/webhooks"
 
+	pathAnnouncementByID      = "/announcements/{id:int}"
 	pathCampaignByID          = "/campaigns/{id:int}"
+	pathDomainByID            = "/domains/{id:int}"
 	pathFormByID              = "/forms/{id:int}"
 	pathPlanByID              = "/plans/{id:int}"
 	pathServerByID            = "/servers/{id:int}"

@@ -8,6 +8,7 @@ import (
 
 	"github.com/goposta/posta/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type MessageFilterRepository struct {
@@ -23,7 +24,7 @@ func (r *MessageFilterRepository) Create(f *models.MessageFilter) error {
 }
 
 func (r *MessageFilterRepository) Update(f *models.MessageFilter) error {
-	return r.db.Save(f).Error
+	return r.db.Omit(clause.Associations).Save(f).Error
 }
 
 func (r *MessageFilterRepository) FindByIDForScope(scope ResourceScope, id uint) (*models.MessageFilter, error) {

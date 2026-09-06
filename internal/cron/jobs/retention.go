@@ -26,6 +26,7 @@ type RetentionCleanupJob struct {
 	trackingRepo     *repositories.TrackingRepository
 	inboundEmailRepo *repositories.InboundEmailRepository
 	messageRepo      *repositories.MessageRepository
+	notificationRepo *repositories.NotificationRepository
 	blobStore        blob.Store
 	settings         *settings.Provider
 }
@@ -54,6 +55,13 @@ func (j *RetentionCleanupJob) SetInboundEmailRepo(r *repositories.InboundEmailRe
 
 func (j *RetentionCleanupJob) SetMessageRepo(r *repositories.MessageRepository) {
 	j.messageRepo = r
+}
+
+// SetNotificationRepo enables pruning of the in-app inbox. Only settled items
+// are dropped; an unresolved, undismissed notification is still true however old
+// it is, so age alone never removes it.
+func (j *RetentionCleanupJob) SetNotificationRepo(r *repositories.NotificationRepository) {
+	j.notificationRepo = r
 }
 
 // SetBlobStore configures the blob store so retention cleanup can also purge
@@ -171,7 +179,21 @@ func minDays(a, b int) int {
 	return b
 }
 
+// notificationRetentionDays is how long a read-and-settled inbox item is kept.
+// It is not operator-configurable: the inbox is a UI convenience, not a record,
+// and the audit log is where history is meant to live.
+const notificationRetentionDays = 90
+
 func (j *RetentionCleanupJob) Run(_ context.Context, _ *asynq.Client) error {
+	if j.notificationRepo != nil {
+		before := time.Now().AddDate(0, 0, -notificationRetentionDays)
+		if deleted, err := j.notificationRepo.Prune(before); err != nil {
+			logger.Error("retention cleanup: failed to prune notifications", "error", err)
+		} else if deleted > 0 {
+			logger.Info("retention cleanup: pruned notifications", "count", deleted)
+		}
+	}
+
 	// Clean up email logs (and any blob-stored attachments).
 	emailRetention := j.settings.RetentionDays()
 	if emailRetention > 0 {

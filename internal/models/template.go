@@ -20,6 +20,6 @@ type Template struct {
 
 	User          User             `json:"-" gorm:"foreignKey:UserID"`
 	ActiveVersion *TemplateVersion `json:"active_version,omitempty" gorm:"foreignKey:ActiveVersionID;constraint:false"`
-	CreatedBy     *ActorRef        `json:"created_by,omitempty" gorm:"foreignKey:UserID;references:ID;constraint:false"`
-	LastEditedBy  *ActorRef        `json:"last_edited_by,omitempty" gorm:"foreignKey:LastEditedByID;references:ID;constraint:false"`
+	CreatedBy     *ActorRef        `json:"created_by,omitempty" gorm:"->;foreignKey:UserID;references:ID;constraint:false"`
+	LastEditedBy  *ActorRef        `json:"last_edited_by,omitempty" gorm:"->;foreignKey:LastEditedByID;references:ID;constraint:false"`
 }

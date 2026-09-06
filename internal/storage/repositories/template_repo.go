@@ -4,9 +4,11 @@
 package repositories
 
 import (
+	"errors"
 	"time"
 
 	"github.com/goposta/posta/internal/models"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -41,7 +43,11 @@ func (r *TemplateRepository) FindByID(id uint) (*models.Template, error) {
 
 func (r *TemplateRepository) FindByIDWithActors(id uint) (*models.Template, error) {
 	var tmpl models.Template
-	if err := r.db.Preload("CreatedBy").Preload("LastEditedBy").First(&tmpl, id).Error; err != nil {
+	if err := r.db.
+		Preload("ActiveVersion").
+		Preload("CreatedBy").
+		Preload("LastEditedBy").
+		First(&tmpl, id).Error; err != nil {
 		return nil, err
 	}
 	return &tmpl, nil
@@ -50,29 +56,6 @@ func (r *TemplateRepository) FindByIDWithActors(id uint) (*models.Template, erro
 func (r *TemplateRepository) TouchEditor(id, editorID uint) error {
 	return r.db.Model(&models.Template{}).Where("id = ?", id).
 		Updates(map[string]any{"last_edited_by_id": editorID, "updated_at": time.Now()}).Error
-}
-
-func (r *TemplateRepository) FindByName(userID uint, name string) (*models.Template, error) {
-	var tmpl models.Template
-	if err := r.db.Where("user_id = ? AND name = ? AND workspace_id IS NULL", userID, name).First(&tmpl).Error; err != nil {
-		return nil, err
-	}
-	return &tmpl, nil
-}
-
-func (r *TemplateRepository) FindByUserID(userID uint, limit, offset int) ([]models.Template, int64, error) {
-	var templates []models.Template
-	var total int64
-
-	r.db.Model(&models.Template{}).Where("user_id = ? AND workspace_id IS NULL", userID).Count(&total)
-
-	if err := r.db.Where("user_id = ? AND workspace_id IS NULL", userID).
-		Order("created_at DESC").
-		Limit(limit).Offset(offset).
-		Find(&templates).Error; err != nil {
-		return nil, 0, err
-	}
-	return templates, total, nil
 }
 
 func (r *TemplateRepository) FindByWorkspaceID(workspaceID uint, limit, offset int) ([]models.Template, int64, error) {
@@ -90,21 +73,31 @@ func (r *TemplateRepository) FindByWorkspaceID(workspaceID uint, limit, offset i
 	return templates, total, nil
 }
 
+// FindByScope lists a workspace's templates.
+//
+// ActiveVersion and the actor refs are preloaded because the list renders all
+// three. Without the preload the version column had nothing to show and printed
+// "v?" against every template that had an active version.
 func (r *TemplateRepository) FindByScope(scope ResourceScope, search string, limit, offset int) ([]models.Template, int64, error) {
 	var items []models.Template
 	var total int64
 
-	q := ApplyScope(r.db.Model(&models.Template{}), scope)
-	if search != "" {
-		q = q.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+	filter := func(q *gorm.DB) *gorm.DB {
+		q = ApplyScope(q, scope)
+		if search != "" {
+			q = q.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+		}
+		return q
 	}
-	q.Count(&total)
 
-	qItems := ApplyScope(r.db, scope)
-	if search != "" {
-		qItems = qItems.Where("name ILIKE ? OR description ILIKE ?", "%"+search+"%", "%"+search+"%")
+	if err := filter(r.db.Model(&models.Template{})).Count(&total).Error; err != nil {
+		return nil, 0, err
 	}
-	if err := qItems.
+
+	if err := filter(r.db.Model(&models.Template{})).
+		Preload("ActiveVersion").
+		Preload("CreatedBy").
+		Preload("LastEditedBy").
 		Order("created_at DESC").
 		Limit(limit).Offset(offset).
 		Find(&items).Error; err != nil {
@@ -119,4 +112,128 @@ func (r *TemplateRepository) FindByWorkspaceName(workspaceID uint, name string) 
 		return nil, err
 	}
 	return &tmpl, nil
+}
+
+// ImportLocalization is one language's content for a template being created.
+type ImportLocalization struct {
+	Language        string
+	SubjectTemplate string
+	HTMLTemplate    string
+	TextTemplate    string
+	BuilderJSON     string
+}
+
+// ImportVersion is one version of a template being created, with its content.
+type ImportVersion struct {
+	SampleData    string
+	StyleSheetID  *uint
+	IsActive      bool
+	Localizations []ImportLocalization
+}
+
+// CreateWithVersions writes a template, its versions, their localizations and
+// the active-version pointer as one unit.
+//
+// Creating these separately left wreckage behind whenever a later step failed:
+// a template with no active version can never be sent, and a partially imported
+// one silently lost languages. Both looked fine in the list.
+//
+// Versions are numbered from 1 in the order given, so an import reproduces the
+// source's ordering rather than depending on what already exists.
+func (r *TemplateRepository) CreateWithVersions(tmpl *models.Template, versions []ImportVersion) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(tmpl).Error; err != nil {
+			return err
+		}
+
+		var activeID *uint
+		for i, in := range versions {
+			v := &models.TemplateVersion{
+				TemplateID:   tmpl.ID,
+				Version:      i + 1,
+				SampleData:   in.SampleData,
+				StyleSheetID: in.StyleSheetID,
+			}
+			if err := tx.Create(v).Error; err != nil {
+				return err
+			}
+			// The first version is activated by default so the template is
+			// usable the moment it exists; an explicitly active one wins.
+			if in.IsActive || i == 0 {
+				id := v.ID
+				activeID = &id
+			}
+
+			for _, l := range in.Localizations {
+				loc := &models.TemplateLocalization{
+					VersionID:       v.ID,
+					Language:        l.Language,
+					SubjectTemplate: l.SubjectTemplate,
+					HTMLTemplate:    l.HTMLTemplate,
+					TextTemplate:    l.TextTemplate,
+					BuilderJSON:     l.BuilderJSON,
+				}
+				if err := tx.Create(loc).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		if activeID == nil {
+			return nil
+		}
+		tmpl.ActiveVersionID = activeID
+		return tx.Model(tmpl).Update("active_version_id", *activeID).Error
+	})
+}
+
+// IsDuplicateName reports whether an error is a unique-constraint violation —
+// for templates, the index on (workspace_id, name) rejecting a second template
+// with the same name. The caller can then answer with a conflict naming the
+// problem instead of a generic failure.
+//
+// It reads the driver error directly rather than gorm.ErrDuplicatedKey, which
+// only exists when the connection is opened with TranslateError.
+func IsDuplicateName(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == uniqueViolationCode
+	}
+	return false
+}
+
+const uniqueViolationCode = "23505"
+
+// LanguagesForActiveVersions returns the languages each template is actually
+// translated into, keyed by template id.
+//
+// It is a single aggregate rather than a preload of the localizations
+// themselves: the list only needs the codes, and loading every localization
+// would pull each language's full HTML body across for nothing. Returning
+// partially-selected localization rows instead would put objects on the wire
+// whose empty subject and body mean "not loaded" rather than "empty".
+func (r *TemplateRepository) LanguagesForActiveVersions(templateIDs []uint) (map[uint][]string, error) {
+	out := make(map[uint][]string, len(templateIDs))
+	if len(templateIDs) == 0 {
+		return out, nil
+	}
+
+	var rows []struct {
+		TemplateID uint
+		Language   string
+	}
+	err := r.db.Table("templates t").
+		Select("t.id as template_id, l.language").
+		Joins("JOIN template_localizations l ON l.version_id = t.active_version_id").
+		Where("t.id IN ?", templateIDs).
+		Order("t.id, l.language").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+
+	for _, row := range rows {
+		out[row.TemplateID] = append(out[row.TemplateID], row.Language)
+	}
+	return out, nil
 }

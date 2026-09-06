@@ -270,7 +270,7 @@ func (r *Router) workspaceResourceRoutes() []okapi.RouteDefinition {
 			Group:    opsGroup,
 			Summary:  "List templates",
 			Request:  &handlers.ListTemplatesRequest{},
-			Response: &dto.PageableResponse[models.Template]{},
+			Response: &dto.PageableResponse[handlers.TemplateListItem]{},
 		},
 		{
 			Method:   http.MethodGet,
@@ -732,7 +732,7 @@ func (r *Router) workspaceResourceRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:      http.MethodPost,
-			Path:        "/domains",
+			Path:        pathDomains,
 			Handler:     okapi.H(r.h.domain.Create),
 			Group:       opsGroup,
 			Summary:     "Add domain",
@@ -745,7 +745,7 @@ func (r *Router) workspaceResourceRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:   http.MethodGet,
-			Path:     "/domains",
+			Path:     pathDomains,
 			Handler:  okapi.H(r.h.domain.List),
 			Group:    opsGroup,
 			Summary:  "List domains",
@@ -754,7 +754,7 @@ func (r *Router) workspaceResourceRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:   http.MethodGet,
-			Path:     "/domains/{id:int}",
+			Path:     pathDomainByID,
 			Handler:  okapi.H(r.h.domain.Get),
 			Group:    opsGroup,
 			Summary:  "Get domain details",
@@ -766,7 +766,7 @@ func (r *Router) workspaceResourceRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:  http.MethodDelete,
-			Path:    "/domains/{id:int}",
+			Path:    pathDomainByID,
 			Handler: okapi.H(r.h.domain.Delete),
 			Group:   opsGroup,
 			Tags:    []string{tagUser},
@@ -779,7 +779,7 @@ func (r *Router) workspaceResourceRoutes() []okapi.RouteDefinition {
 		},
 		{
 			Method:      http.MethodPost,
-			Path:        "/domains/{id:int}/verify",
+			Path:        pathDomainByID + "/verify",
 			Handler:     okapi.H(r.h.domain.Verify),
 			Group:       opsGroup,
 			Summary:     "Verify domain DNS records",

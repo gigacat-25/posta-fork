@@ -1,91 +1,41 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, watch } from "vue";
+import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
+import { useInboxStore } from "../../stores/inbox";
+import type { InboxNotification } from "../../api/inbox";
 import type { DashboardStats } from "../../api/types";
 
-const props = defineProps<{ stats: DashboardStats }>();
-const router = useRouter();
 
-interface Alert {
-  key: string;
-  tone: "danger" | "warning";
-  title: string;
-  detail: string;
-  action: string;
-  to: string;
+const props = defineProps<{ stats: DashboardStats }>();
+
+const router = useRouter();
+const store = useInboxStore();
+const { banner } = storeToRefs(store);
+
+const alerts = computed(() => banner.value);
+
+function tone(n: InboxNotification) {
+  return n.severity === "critical" ? "danger" : n.severity === "warning" ? "warning" : "info";
 }
 
-const alerts = computed<Alert[]>(() => {
-  const s = props.stats;
-  const out: Alert[] = [];
+function act(n: InboxNotification) {
+  if (n.link) router.push(n.link);
+}
 
-  if (s.unverified_domains > 0) {
-    out.push({
-      key: "domains",
-      tone: "warning",
-      title: `${s.unverified_domains} domain${s.unverified_domains === 1 ? "" : "s"} not verified`,
-      detail:
-        "Mail from an unverified domain is far more likely to be filtered, and some routes refuse to send from one at all.",
-      action: "Verify domains",
-      to: "/domains",
-    });
-  }
-
-  if (s.total_emails >= 20 && s.bounce_rate >= 5) {
-    out.push({
-      key: "bounces",
-      tone: "danger",
-      title: `Bounce rate is ${s.bounce_rate.toFixed(1)}%`,
-      detail:
-        "Sustained bounces above 5% damage sender reputation. Clean the recipient list before sending more.",
-      action: "Review bounces",
-      to: "/bounces",
-    });
-  }
-
-  if (s.total_emails >= 20 && s.failure_rate >= 10) {
-    out.push({
-      key: "failures",
-      tone: "danger",
-      title: `${s.failure_rate.toFixed(1)}% of sends are failing`,
-      detail:
-        "Check the SMTP server configuration and the most recent failures for a common cause.",
-      action: "View failed emails",
-      to: "/emails?status=failed",
-    });
-  }
-
-  if (s.expiring_api_keys > 0) {
-    out.push({
-      key: "keys",
-      tone: "warning",
-      title: `${s.expiring_api_keys} API key${s.expiring_api_keys === 1 ? "" : "s"} expiring within 7 days`,
-      detail: "Rotate them before they lapse, or the integrations using them will start failing.",
-      action: "Manage API keys",
-      to: "/api-keys",
-    });
-  }
-
-  if (s.features?.messages && s.unread_messages > 0) {
-    out.push({
-      key: "messages",
-      tone: "warning",
-      title: `${s.unread_messages} unread message${s.unread_messages === 1 ? "" : "s"}`,
-      detail: "Someone filled in one of your web forms and is waiting for a reply.",
-      action: "Open inbox",
-      to: "/messages",
-    });
-  }
-
-  return out;
-});
-
-defineExpose({ alerts });
+onMounted(() => void store.loadBanner());
+watch(() => props.stats, () => void store.loadBanner());
 </script>
 
 <template>
   <div v-if="alerts.length" class="alerts">
-    <div v-for="a in alerts" :key="a.key" class="alert-banner" :class="`alert-${a.tone}`" role="status">
+    <div
+      v-for="a in alerts"
+      :key="a.id"
+      class="alert-banner"
+      :class="`alert-${tone(a)}`"
+      role="status"
+    >
       <svg
         class="ab-icon"
         viewBox="0 0 24 24"
@@ -96,15 +46,35 @@ defineExpose({ alerts });
         stroke-linejoin="round"
         aria-hidden="true"
       >
-        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-        <line x1="12" y1="9" x2="12" y2="13" />
-        <line x1="12" y1="17" x2="12.01" y2="17" />
+        <template v-if="a.kind === 'announcement'">
+          <circle cx="12" cy="12" r="10" />
+          <line x1="12" y1="16" x2="12" y2="12" />
+          <line x1="12" y1="8" x2="12.01" y2="8" />
+        </template>
+        <template v-else>
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" />
+          <line x1="12" y1="17" x2="12.01" y2="17" />
+        </template>
       </svg>
       <div class="ab-text">
         <strong>{{ a.title }}</strong>
-        <span>{{ a.detail }}</span>
+        <span>{{ a.body }}</span>
       </div>
-      <button class="btn btn-secondary btn-sm" @click="router.push(a.to)">{{ a.action }}</button>
+      <button v-if="a.link" class="btn btn-secondary btn-sm" @click="act(a)">
+        {{ a.action_text || "Open" }}
+      </button>
+      <button
+        class="ab-dismiss"
+        type="button"
+        :aria-label="`Dismiss: ${a.title}`"
+        title="Dismiss. Comes back if this gets worse."
+        @click="store.dismiss(a.id)"
+      >
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 4l8 8M12 4l-8 8" />
+        </svg>
+      </button>
     </div>
   </div>
 </template>
@@ -139,6 +109,12 @@ defineExpose({ alerts });
   color: var(--warning-600);
 }
 
+.alert-info {
+  background: var(--primary-50);
+  border-color: var(--primary-500);
+  color: var(--primary-600);
+}
+
 .ab-icon {
   width: 20px;
   height: 20px;
@@ -163,5 +139,30 @@ defineExpose({ alerts });
 .btn-sm {
   padding: 5px 12px;
   font-size: 12px;
+}
+
+.ab-dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.ab-dismiss svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ab-dismiss:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 </style>

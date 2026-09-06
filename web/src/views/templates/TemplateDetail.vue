@@ -1,24 +1,32 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { templatesApi } from "../../api/templates";
 import { stylesheetsApi } from "../../api/stylesheets";
 import { languagesApi } from "../../api/languages";
 import type {
+  Language,
+  StyleSheet,
   Template,
-  TemplateVersion,
+  TemplateInput,
   TemplateLocalization,
   TemplateLocalizationInput,
   TemplatePreview,
-  StyleSheet,
-  Language,
-  TemplateInput,
+  TemplateVersion,
 } from "../../api/types";
 import { useNotificationStore } from "../../stores/notification";
 import { useConfirm } from "../../composables/useConfirm";
 import { useModalSafeClose } from "../../composables/useModalSafeClose";
 import { useWorkspaceStore } from "../../stores/workspace";
+import { apiMessage } from "../../composables/apiError";
 import TemplateModal from "@/components/TemplateModal.vue";
+import TemplateSummary from "./detail/TemplateSummary.vue";
+import VersionList from "./detail/VersionList.vue";
+import LocalizationList from "./detail/LocalizationList.vue";
+import LocalizationModal from "./detail/LocalizationModal.vue";
+import PreviewModal from "./detail/PreviewModal.vue";
+import SendTestModal, { type SendTestForm } from "./detail/SendTestModal.vue";
+import VersionStylesheetModal from "./detail/VersionStylesheetModal.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -27,23 +35,23 @@ const wsStore = useWorkspaceStore();
 const { confirm } = useConfirm();
 
 const templateId = Number(route.params.id);
-const idCopied = ref(false);
-
-function copyTemplateId() {
-  navigator.clipboard.writeText(String(templateId));
-  idCopied.value = true;
-  setTimeout(() => (idCopied.value = false), 2000);
-}
 
 const template = ref<Template | null>(null);
 const versions = ref<TemplateVersion[]>([]);
-const localizations = ref<TemplateLocalization[]>([]);
 const stylesheets = ref<StyleSheet[]>([]);
 const languages = ref<Language[]>([]);
 const loading = ref(true);
 const selectedVersion = ref<TemplateVersion | null>(null);
 
-// Localization modal
+const localizations = computed(() => selectedVersion.value?.localizations ?? []);
+
+// The languages the template actually sends: those on the active version, not
+// on whichever draft happens to be selected.
+const activeLanguages = computed(() => {
+  const active = versions.value.find((v) => v.id === template.value?.active_version_id);
+  return (active?.localizations ?? []).map((l) => l.language).sort();
+});
+
 const showLocModal = ref(false);
 const editingLoc = ref<TemplateLocalization | null>(null);
 const savingLoc = ref(false);
@@ -54,35 +62,25 @@ const locForm = ref<TemplateLocalizationInput>({
   text_template: "",
 });
 
-// Preview
 const showPreview = ref(false);
 const previewLang = ref("");
-const previewData = ref('');
+const previewData = ref("{}");
 const preview = ref<TemplatePreview | null>(null);
 const previewLoading = ref(false);
 const previewError = ref("");
 
-// Send test
 const showSendTest = ref(false);
 const sendingTest = ref(false);
-const sendTestForm = ref({
-  to: "",
-  from: "",
-  language: "",
-  data: '',
-});
+const sendTestForm = ref<SendTestForm>({ to: "", from: "", language: "", data: "{}" });
 
-// Version creation
 const creatingVersion = ref(false);
 const newVersionStylesheetId = ref<number | null>(null);
 
-// Version stylesheet edit
 const showVersionStylesheetModal = ref(false);
 const editingVersion = ref<TemplateVersion | null>(null);
 const editVersionStylesheetId = ref<number | null>(null);
 const savingVersionStylesheet = ref(false);
 
-//template modal
 const savingTemplate = ref(false);
 const showTemplateEditModal = ref(false);
 const templateForm = ref<TemplateInput>({
@@ -91,11 +89,6 @@ const templateForm = ref<TemplateInput>({
   default_language: "en",
   description: "",
 });
-
-
-const isActive = computed(() => (v: TemplateVersion) =>
-  template.value?.active_version_id === v.id
-);
 
 async function loadAll() {
   loading.value = true;
@@ -111,20 +104,14 @@ async function loadAll() {
     stylesheets.value = ssRes.data.data || [];
     languages.value = langRes.data.data || [];
 
-    if (!template.value) {
-      notify.error("Template not found");
-      return;
+    if (versions.value.length) {
+      const active = versions.value.find((v) => v.id === template.value?.active_version_id);
+      selectedVersion.value = active || versions.value[0];
+    } else {
+      selectedVersion.value = null;
     }
-
-    // Auto-select the active version or the first one
-    if (versions.value.length > 0) {
-      const active = versions.value.find(
-        (v) => v.id === template.value?.active_version_id
-      );
-      selectVersion(active || versions.value[0]);
-    }
-  } catch {
-    notify.error("Failed to load template");
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to load template"));
   } finally {
     loading.value = false;
   }
@@ -132,29 +119,36 @@ async function loadAll() {
 
 function selectVersion(v: TemplateVersion) {
   selectedVersion.value = v;
-  localizations.value = v.localizations || [];
 }
 
-function syncLocalizationsToVersion() {
-  if (!selectedVersion.value) return;
-  selectedVersion.value.localizations = [...localizations.value];
-  const idx = versions.value.findIndex((v) => v.id === selectedVersion.value!.id);
-  if (idx >= 0) versions.value[idx].localizations = [...localizations.value];
+// Version objects are held in one place — the versions array — and the selection
+// points into it, so a localization change is written once and both the table
+// and the selected view reflect it.
+function replaceVersion(v: TemplateVersion) {
+  const idx = versions.value.findIndex((x) => x.id === v.id);
+  if (idx >= 0) versions.value[idx] = v;
+  if (selectedVersion.value?.id === v.id) selectedVersion.value = versions.value[idx] ?? v;
 }
 
-async function createVersion() {
+function updateLocalizations(mutate: (list: TemplateLocalization[]) => TemplateLocalization[]) {
+  const v = selectedVersion.value;
+  if (!v) return;
+  replaceVersion({ ...v, localizations: mutate([...(v.localizations ?? [])]) });
+}
+
+async function createVersion(stylesheetId: number | null) {
   creatingVersion.value = true;
   try {
     const res = await templatesApi.createVersion(templateId, {
-      stylesheet_id: newVersionStylesheetId.value,
+      stylesheet_id: stylesheetId,
       sample_data: template.value?.sample_data || "",
     });
     versions.value.unshift(res.data.data);
-    selectVersion(res.data.data);
-    notify.success(`Version ${res.data.data.version} created`);
+    selectedVersion.value = res.data.data;
     newVersionStylesheetId.value = null;
-  } catch {
-    notify.error("Failed to create version");
+    notify.success(`Version ${res.data.data.version} created`);
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to create version"));
   } finally {
     creatingVersion.value = false;
   }
@@ -173,38 +167,45 @@ async function saveVersionStylesheet() {
     const res = await templatesApi.updateVersion(templateId, editingVersion.value.id, {
       stylesheet_id: editVersionStylesheetId.value,
     });
-    const idx = versions.value.findIndex((v) => v.id === editingVersion.value!.id);
-    if (idx >= 0) versions.value[idx] = res.data.data;
-    if (selectedVersion.value?.id === editingVersion.value.id) {
-      selectedVersion.value = res.data.data;
-    }
-    notify.success("Version stylesheet updated");
+    // The update response omits localizations, so keep the ones already loaded
+    // rather than blanking the content table.
+    replaceVersion({ ...res.data.data, localizations: editingVersion.value.localizations });
     showVersionStylesheetModal.value = false;
-  } catch {
-    notify.error("Failed to update version stylesheet");
+    notify.success("Stylesheet updated");
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to update the stylesheet"));
   } finally {
     savingVersionStylesheet.value = false;
   }
 }
 
 async function activateVersion(v: TemplateVersion) {
+  if (!v.localizations?.length) {
+    const proceed = await confirm({
+      title: `Activate v${v.version}?`,
+      message:
+        "This version has no content. Activating it means every send from this template will fail until a language is added.",
+      confirmText: "Activate anyway",
+      variant: "warning",
+    });
+    if (!proceed) return;
+  }
   try {
     const res = await templatesApi.activateVersion(templateId, v.id);
     template.value = res.data.data;
-    notify.success(`Version ${v.version} activated`);
-  } catch {
-    notify.error("Failed to activate version");
+    notify.success(`Version ${v.version} is now live`);
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to activate version"));
   }
 }
 
 async function deleteVersion(v: TemplateVersion) {
-  if (template.value?.active_version_id === v.id) {
-    notify.error("Cannot delete the active version");
-    return;
-  }
+  const count = v.localizations?.length ?? 0;
   const confirmed = await confirm({
-    title: "Delete Version",
-    message: `Delete version ${v.version}? All its localizations will also be deleted.`,
+    title: `Delete v${v.version}`,
+    message: count
+      ? `Its ${count} language${count === 1 ? "" : "s"} of content will be deleted with it. This cannot be undone.`
+      : "This cannot be undone.",
     confirmText: "Delete",
     variant: "danger",
   });
@@ -212,21 +213,17 @@ async function deleteVersion(v: TemplateVersion) {
   try {
     await templatesApi.deleteVersion(templateId, v.id);
     versions.value = versions.value.filter((x) => x.id !== v.id);
-    if (selectedVersion.value?.id === v.id) {
-      selectedVersion.value = versions.value[0] || null;
-      if (selectedVersion.value) selectVersion(selectedVersion.value);
-      else localizations.value = [];
-    }
+    if (selectedVersion.value?.id === v.id) selectedVersion.value = versions.value[0] || null;
     notify.success("Version deleted");
-  } catch {
-    notify.error("Failed to delete version");
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to delete version"));
   }
 }
 
-function openCreateLoc() {
+function openCreateLoc(language?: string) {
   editingLoc.value = null;
   locForm.value = {
-    language: "",
+    language: language || "",
     subject_template: "",
     html_template: "",
     text_template: "",
@@ -255,25 +252,23 @@ async function saveLoc() {
         html_template: locForm.value.html_template,
         text_template: locForm.value.text_template,
       });
-      const idx = localizations.value.findIndex((l) => l.id === editingLoc.value!.id);
-      if (idx >= 0) localizations.value[idx] = res.data.data;
-      notify.success("Localization updated");
+      updateLocalizations((list) =>
+        list.map((l) => (l.id === editingLoc.value!.id ? res.data.data : l))
+      );
+      notify.success("Content updated");
     } else {
       const res = await templatesApi.createLocalization(
         templateId,
         selectedVersion.value.id,
         locForm.value
       );
-      localizations.value.push(res.data.data);
-      notify.success("Localization created");
+      updateLocalizations((list) => [...list, res.data.data]);
+      notify.success(`${res.data.data.language} added`);
     }
-    syncLocalizationsToVersion();
     showLocModal.value = false;
-  } catch {
+  } catch (e: any) {
     notify.error(
-      editingLoc.value
-        ? "Failed to update localization"
-        : "Language already exists for this version"
+      apiMessage(e, editingLoc.value ? "Failed to update the content" : "Failed to add the language")
     );
   } finally {
     savingLoc.value = false;
@@ -281,60 +276,73 @@ async function saveLoc() {
 }
 
 async function deleteLoc(l: TemplateLocalization) {
+  const isDefault = l.language === template.value?.default_language;
   const confirmed = await confirm({
-    title: "Delete Localization",
-    message: `Delete the "${l.language}" localization? This cannot be undone.`,
+    title: `Delete ${l.language}`,
+    message: isDefault
+      ? `${l.language} is this template's default language. Removing it means sends that do not name a language will fail.`
+      : "This cannot be undone.",
     confirmText: "Delete",
     variant: "danger",
   });
   if (!confirmed) return;
   try {
     await templatesApi.deleteLocalization(l.id);
-    localizations.value = localizations.value.filter((x) => x.id !== l.id);
-    syncLocalizationsToVersion();
-    notify.success("Localization deleted");
-  } catch {
-    notify.error("Failed to delete localization");
+    updateLocalizations((list) => list.filter((x) => x.id !== l.id));
+    notify.success(`${l.language} deleted`);
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to delete the content"));
   }
+}
+
+function openEditor(l: TemplateLocalization) {
+  router.push(
+    `/templates/${templateId}/versions/${selectedVersion.value?.id}/localizations/${l.id}/edit`
+  );
 }
 
 async function renderPreview() {
   if (!selectedVersion.value || !previewLang.value) return;
   previewLoading.value = true;
   previewError.value = "";
-  preview.value = null;
 
   let data: Record<string, any> = {};
   try {
-    data = JSON.parse(previewData.value);
+    data = JSON.parse(previewData.value || "{}");
   } catch {
-    previewError.value = "Invalid JSON in sample data";
+    previewError.value = "Sample data is not valid JSON";
     previewLoading.value = false;
     return;
   }
 
   try {
-    const res = await templatesApi.previewLocalization(
-      templateId,
-      selectedVersion.value.id,
-      {
-        language: previewLang.value,
-        template_data: data,
-      }
-    );
+    const res = await templatesApi.previewLocalization(templateId, selectedVersion.value.id, {
+      language: previewLang.value,
+      template_data: data,
+    });
     preview.value = res.data.data;
   } catch (e: any) {
-    previewError.value = e.response?.data?.error?.message || "Failed to render preview";
+    previewError.value = apiMessage(e, "Failed to render preview");
   } finally {
     previewLoading.value = false;
   }
+}
+
+function openPreview(lang: string) {
+  previewLang.value = lang;
+  preview.value = null;
+  previewError.value = "";
+  previewData.value =
+    template.value?.sample_data || selectedVersion.value?.sample_data || "{}";
+  showPreview.value = true;
+  renderPreview();
 }
 
 function openSendTest() {
   sendTestForm.value = {
     to: "",
     from: "",
-    language: template.value?.default_language || "en",
+    language: template.value?.default_language || localizations.value[0]?.language || "",
     data:
       template.value?.sample_data ||
       selectedVersion.value?.sample_data ||
@@ -344,18 +352,7 @@ function openSendTest() {
 }
 
 async function sendTest() {
-  if (!sendTestForm.value.to.trim()) return;
   sendingTest.value = true;
-
-  let data: Record<string, any> = {};
-  try {
-    data = JSON.parse(sendTestForm.value.data);
-  } catch {
-    notify.error("Invalid JSON in sample data");
-    sendingTest.value = false;
-    return;
-  }
-
   try {
     const to = sendTestForm.value.to
       .split(",")
@@ -365,32 +362,19 @@ async function sendTest() {
       to,
       from: sendTestForm.value.from || undefined,
       language: sendTestForm.value.language || undefined,
-      template_data: data,
+      template_data: JSON.parse(sendTestForm.value.data || "{}"),
     });
-    notify.success("Test email sent");
     showSendTest.value = false;
+    notify.success(`Test sent to ${to.join(", ")}`);
   } catch (e: any) {
-    notify.error(e.response?.data?.error?.message || "Failed to send test email");
+    notify.error(apiMessage(e, "Failed to send the test"));
   } finally {
     sendingTest.value = false;
   }
 }
 
-function openPreview(lang: string) {
-  previewLang.value = lang;
-  preview.value = null;
-  previewError.value = "";
-  if (template.value?.sample_data) {
-    previewData.value = template.value.sample_data;
-  } else if (selectedVersion.value?.sample_data) {
-    previewData.value = selectedVersion.value.sample_data;
-  }
-  showPreview.value = true;
-  renderPreview();
-}
-
 function openEditTemplate() {
-  if(!template.value) return
+  if (!template.value) return;
   templateForm.value = {
     name: template.value.name,
     sample_data: template.value.sample_data || "",
@@ -399,642 +383,209 @@ function openEditTemplate() {
   };
   showTemplateEditModal.value = true;
 }
+
 async function saveTemplate() {
-  if (!templateForm.value.name.trim()) return;
-  if (!template.value) return
+  if (!template.value || !templateForm.value.name.trim()) return;
   savingTemplate.value = true;
   try {
-    
-      await templatesApi.update(template.value?.id, templateForm.value);
-      notify.success("Template updated");
-   
-    closeActiveModal();
-    loadAll()
-  } catch {
-    notify.error(
-    "Failed to update template"
-    );
+    await templatesApi.update(template.value.id, templateForm.value);
+    showTemplateEditModal.value = false;
+    await loadAll();
+    notify.success("Template updated");
+  } catch (e: any) {
+    notify.error(apiMessage(e, "Failed to update template"));
   } finally {
     savingTemplate.value = false;
   }
 }
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
+
+function closeActiveModal() {
+  showVersionStylesheetModal.value = false;
+  showPreview.value = false;
+  showSendTest.value = false;
+  showLocModal.value = false;
+  showTemplateEditModal.value = false;
 }
 
-const closeActiveModal = () => {
-  if (showVersionStylesheetModal.value) showVersionStylesheetModal.value = false;
-  if (showPreview.value) showPreview.value = false;
-  if (showSendTest.value) showSendTest.value = false;
-  if (showLocModal.value) showLocModal.value = false;
-  if (showTemplateEditModal.value) showTemplateEditModal.value = false;
-};
+const { watchClickStart, confirmClickEnd } = useModalSafeClose(closeActiveModal);
 
-const { watchClickStart, confirmClickEnd } = useModalSafeClose(() => {
-  closeActiveModal();
-});
 onMounted(loadAll);
 </script>
 
 <template>
   <div>
     <div class="page-header">
-      <h1>{{ template?.name || "Template" }}</h1>
-      <div class="flex gap-2">
+      <div>
+        <h1>{{ template?.name || "Template" }}</h1>
+        <p class="crumb">
+          <RouterLink to="/templates">Templates</RouterLink>
+          <span aria-hidden="true"> / </span>
+          <span>{{ template?.name || "…" }}</span>
+        </p>
+      </div>
+      <div class="header-actions">
         <button
           class="btn btn-primary"
-          @click="openSendTest"
           :disabled="!template?.active_version_id"
+          :title="template?.active_version_id ? '' : 'Activate a version before sending'"
+          @click="openSendTest"
         >
-          Send Test
+          Send test
         </button>
-        <button class="btn btn-outline-primary" @click="openEditTemplate">
-          Edit Template
-        </button>
-        <button class="btn btn-secondary" @click="router.push('/templates')">
-          Back to Templates
+        <button v-if="wsStore.canEdit" class="btn btn-secondary" @click="openEditTemplate">
+          Settings
         </button>
       </div>
     </div>
 
-    <div v-if="loading" class="loading-page">
-      <div class="spinner"></div>
-    </div>
+    <div v-if="loading" class="loading-page"><div class="spinner"></div></div>
 
     <template v-else-if="template">
-      <!-- Template Info -->
-      <div class="card" style="margin-bottom: 24px">
-        <div class="card-body">
-          <table>
-            <tbody>
-              <tr>
-                <td class="info-label">Template ID</td>
-                <td>
-                  <code class="template-id">{{ template.id }}</code>
-                  <button class="btn-copy" @click="copyTemplateId" :title="idCopied ? 'Copied!' : 'Copy ID'">
-                    <template v-if="idCopied">
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                        stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    </template>
-                    <template v-else>
-                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
-                        <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
-                      </svg>
-                    </template>
-                  </button>
-                  <span v-if="idCopied" class="copied-label">Copied!</span>
-                </td>
-              </tr>
-              <tr>
-                <td class="info-label">Name</td>
-                <td>{{ template.name }}</td>
-              </tr>
-              <tr v-if="template.description">
-                <td class="info-label">Description</td>
-                <td>{{ template.description }}</td>
-              </tr>
-              <tr>
-                <td class="info-label">Default Language</td>
-                <td>
-                  <span class="badge badge-info">{{ template.default_language }}</span>
-                </td>
-              </tr>
-              <tr>
-                <td class="info-label">Active Version</td>
-                <td>
-                  <span v-if="template.active_version_id" class="badge badge-success">
-                    v{{ versions.find(v => v.id === template!.active_version_id)?.version || '?' }}
-                  </span>
-                  <span v-else class="text-muted">None</span>
-                </td>
-              </tr>
-              <tr>
-                <td class="info-label">Created</td>
-                <td>{{ formatDate(template.created_at) }}</td>
-              </tr>
-              <tr v-if="template.created_by">
-                <td class="info-label">Created by</td>
-                <td>{{ template.created_by.name }}</td>
-              </tr>
-              <tr v-if="template.last_edited_by">
-                <td class="info-label">Last edited by</td>
-                <td>
-                  {{ template.last_edited_by.name }}
-                  <span v-if="template.updated_at" class="text-muted">
-                    · {{ formatDate(template.updated_at) }}</span>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <TemplateSummary :template="template" :versions="versions" :languages="activeLanguages" />
 
-      <!-- Versions -->
-      <div class="card" style="margin-bottom: 24px">
-        <div class="card-header">
-          <h2>Versions</h2>
-          <div v-if="wsStore.canEdit" class="flex gap-2 align-center">
-            <select v-model="newVersionStylesheetId" class="form-select form-select-sm">
-              <option :value="null">No stylesheet</option>
-              <option v-for="ss in stylesheets" :key="ss.id" :value="ss.id">
-                {{ ss.name }}
-              </option>
-            </select>
-            <button
-              class="btn btn-primary btn-sm"
-              @click="createVersion"
-              :disabled="creatingVersion"
-            >
-              {{ creatingVersion ? "Creating..." : "New Version" }}
-            </button>
-          </div>
-        </div>
+      <div class="stack">
+        <VersionList
+          v-model:new-stylesheet-id="newVersionStylesheetId"
+          :versions="versions"
+          :stylesheets="stylesheets"
+          :selected-id="selectedVersion?.id ?? null"
+          :active-id="template.active_version_id ?? null"
+          :can-edit="wsStore.canEdit"
+          :creating="creatingVersion"
+          @select="selectVersion"
+          @create="createVersion"
+          @edit-stylesheet="openEditVersionStylesheet"
+          @activate="activateVersion"
+          @delete="deleteVersion"
+        />
 
-        <div v-if="versions.length === 0" class="empty-state">
-          <p>No versions yet. Create one to start adding localizations.</p>
-        </div>
-
-        <div v-else class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Version</th>
-                <th>Stylesheet</th>
-                <th>Created</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr
-                v-for="v in versions"
-                :key="v.id"
-                :class="{ 'row-selected': selectedVersion?.id === v.id }"
-                style="cursor: pointer"
-                @click="selectVersion(v)"
-              >
-                <td>
-                  <strong>v{{ v.version }}</strong>
-                </td>
-                <td>
-                  <span v-if="v.stylesheet" class="badge badge-neutral">{{
-                    v.stylesheet.name
-                  }}</span>
-                  <span v-else class="text-muted">&mdash;</span>
-                </td>
-                <td>{{ formatDate(v.created_at) }}</td>
-                <td>
-                  <span v-if="isActive(v)" class="badge badge-success">Active</span>
-                  <span v-else class="badge badge-neutral">Draft</span>
-                </td>
-                <td>
-                  <div class="flex gap-2" @click.stop>
-                    <button
-                      v-if="wsStore.canEdit"
-                      class="btn btn-secondary btn-sm"
-                      @click="openEditVersionStylesheet(v)"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      v-if="wsStore.canEdit && !isActive(v)"
-                      class="btn btn-primary btn-sm"
-                      @click="activateVersion(v)"
-                    >
-                      Activate
-                    </button>
-                    <button
-                      v-if="wsStore.canEdit && !isActive(v)"
-                      class="btn btn-danger btn-sm"
-                      @click="deleteVersion(v)"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <!-- Localizations for selected version -->
-      <div v-if="selectedVersion" class="card">
-        <div class="card-header">
-          <h2>Localizations &mdash; v{{ selectedVersion.version }}</h2>
-          <button v-if="wsStore.canEdit" class="btn btn-primary btn-sm" @click="openCreateLoc">
-            Add Language
-          </button>
-        </div>
-
-        <div v-if="localizations.length === 0" class="empty-state">
-          <p>No localizations yet. Add a language to start defining content.</p>
-        </div>
-
-        <div v-else class="table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Language</th>
-                <th>Subject</th>
-                <th>Updated</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="l in localizations" :key="l.id">
-                <td>
-                  <strong>{{ l.language }}</strong>
-                  <span
-                    v-if="l.language === template.default_language"
-                    class="badge badge-info"
-                    style="margin-left: 6px"
-                    >default</span
-                  >
-                </td>
-                <td class="truncate" style="max-width: 300px">
-                  {{ l.subject_template }}
-                </td>
-                <td>
-                  <span v-if="l.updated_at">{{ formatDate(l.updated_at) }}</span>
-                  <span v-else>{{ formatDate(l.created_at) }}</span>
-                </td>
-                <td>
-                  <div class="flex gap-2">
-                    <button
-                      class="btn btn-secondary btn-sm"
-                      @click="openPreview(l.language)"
-                    >
-                      Preview
-                    </button>
-                    <button
-                      v-if="wsStore.canEdit"
-                      class="btn btn-secondary btn-sm"
-                      @click="router.push(`/templates/${templateId}/versions/${selectedVersion?.id}/localizations/${l.id}/edit`)"
-                    >
-                      Editor
-                    </button>
-                    <button v-if="wsStore.canEdit" class="btn btn-secondary btn-sm" @click="openEditLoc(l)">
-                      Quick Edit
-                    </button>
-                    <button v-if="wsStore.canEdit" class="btn btn-danger btn-sm" @click="deleteLoc(l)">
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <LocalizationList
+          v-if="selectedVersion"
+          :version="selectedVersion"
+          :localizations="localizations"
+          :languages="languages"
+          :default-language="template.default_language"
+          :can-edit="wsStore.canEdit"
+          @add="openCreateLoc"
+          @edit="openEditLoc"
+          @open-editor="openEditor"
+          @preview="openPreview"
+          @delete="deleteLoc"
+        />
       </div>
     </template>
 
-    <div v-else class="empty-state">
-      <h3>Template not found</h3>
+    <div v-else class="card">
+      <div class="empty-state">
+        <h3>Template not found</h3>
+        <button class="btn btn-secondary" @click="router.push('/templates')">
+          Back to templates
+        </button>
+      </div>
     </div>
 
-    <!-- Localization Create/Edit Modal -->
     <div
       v-if="showLocModal"
       class="modal-overlay"
       @mousedown="watchClickStart"
       @mouseup="confirmClickEnd"
     >
-      <div class="modal" style="max-width: 720px" @mousedown.stop @mouseup.stop>
-        <div class="modal-header">
-          <h3>
-            {{
-              editingLoc
-                ? `Edit Localization (${editingLoc.language})`
-                : "Add Localization"
-            }}
-          </h3>
-        </div>
-        <div class="modal-body">
-          <div v-if="!editingLoc" class="form-group">
-            <label class="form-label">Language</label>
-            <select v-model="locForm.language" class="form-select">
-              <option value="" disabled>Select a language</option>
-              <option v-for="lang in languages" :key="lang.id" :value="lang.code">
-                {{ lang.name }} ({{ lang.code }})
-              </option>
-            </select>
-            <span class="form-hint">Choose from your configured languages</span>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Subject Template</label>
-            <input
-              v-model="locForm.subject_template"
-              class="form-input"
-              placeholder="e.g. Welcome {{name}}!"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label">HTML Template</label>
-            <textarea
-              v-model="locForm.html_template"
-              class="form-textarea"
-              rows="8"
-              placeholder="<html>...</html>"
-            ></textarea>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Text Template</label>
-            <textarea
-              v-model="locForm.text_template"
-              class="form-textarea"
-              rows="4"
-              placeholder="Plain text version..."
-            ></textarea>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showLocModal = false">Cancel</button>
-          <button
-            class="btn btn-primary"
-            :disabled="
-              savingLoc ||
-              (!editingLoc && !locForm.language.trim()) ||
-              !locForm.subject_template.trim()
-            "
-            @click="saveLoc"
-          >
-            {{ savingLoc ? "Saving..." : editingLoc ? "Update" : "Create" }}
-          </button>
-        </div>
-      </div>
+      <LocalizationModal
+        v-model:form="locForm"
+        :editing="editingLoc"
+        :languages="languages"
+        :taken="localizations.map((l) => l.language)"
+        :saving="savingLoc"
+        @close="showLocModal = false"
+        @save="saveLoc"
+      />
     </div>
 
-    <!-- Send Test Modal -->
     <div
       v-if="showSendTest"
       class="modal-overlay"
       @mousedown="watchClickStart"
       @mouseup="confirmClickEnd"
     >
-      <div class="modal" style="max-width: 560px" @mousedown.stop @mouseup.stop>
-        <div class="modal-header">
-          <h3>Send Test Email</h3>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">To</label>
-            <input
-              v-model="sendTestForm.to"
-              class="form-input"
-              placeholder="test@example.com"
-            />
-            <span class="form-hint">Comma-separated for multiple recipients</span>
-          </div>
-          <div class="form-group">
-            <label class="form-label">From (optional)</label>
-            <input
-              v-model="sendTestForm.from"
-              class="form-input"
-              placeholder="noreply@localhost"
-            />
-          </div>
-          <div class="form-group">
-            <label class="form-label">Language</label>
-            <select v-model="sendTestForm.language" class="form-select">
-              <option v-for="l in localizations" :key="l.language" :value="l.language">
-                {{ l.language }}
-              </option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Sample Data (JSON)</label>
-            <textarea
-              v-model="sendTestForm.data"
-              class="form-textarea"
-              rows="4"
-              placeholder='{"name": "John"}'
-            ></textarea>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showSendTest = false">Cancel</button>
-          <button
-            class="btn btn-primary"
-            :disabled="sendingTest || !sendTestForm.to.trim()"
-            @click="sendTest"
-          >
-            {{ sendingTest ? "Sending..." : "Send Test" }}
-          </button>
-        </div>
-      </div>
+      <SendTestModal
+        v-model:form="sendTestForm"
+        :localizations="localizations"
+        :sending="sendingTest"
+        @close="showSendTest = false"
+        @send="sendTest"
+      />
     </div>
 
-    <!-- Preview Modal -->
     <div
       v-if="showPreview"
       class="modal-overlay"
       @mousedown="watchClickStart"
       @mouseup="confirmClickEnd"
     >
-      <div class="modal" style="max-width: 800px" @mousedown.stop @mouseup.stop>
-        <div class="modal-header">
-          <h3>Preview &mdash; {{ previewLang }}</h3>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Sample Data (JSON)</label>
-            <textarea
-              v-model="previewData"
-              class="form-textarea"
-              rows="3"
-              placeholder='{"name": "John"}'
-            ></textarea>
-          </div>
-          <button
-            class="btn btn-secondary btn-sm"
-            style="margin-bottom: 16px"
-            @click="renderPreview"
-            :disabled="previewLoading"
-          >
-            {{ previewLoading ? "Rendering..." : "Refresh Preview" }}
-          </button>
-
-          <div v-if="previewError" class="preview-error">{{ previewError }}</div>
-
-          <template v-if="preview">
-            <div class="preview-section">
-              <div class="preview-label">Subject</div>
-              <div class="preview-content">{{ preview.subject }}</div>
-            </div>
-            <div v-if="preview.html" class="preview-section">
-              <div class="preview-label">HTML</div>
-              <div class="preview-html">
-                <iframe :srcdoc="preview.html" sandbox="" class="preview-iframe"></iframe>
-              </div>
-            </div>
-            <div v-if="preview.text" class="preview-section">
-              <div class="preview-label">Plain Text</div>
-              <div class="preview-text">{{ preview.text }}</div>
-            </div>
-          </template>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showPreview = false">Close</button>
-        </div>
-      </div>
+      <PreviewModal
+        v-model:data="previewData"
+        :language="previewLang"
+        :preview="preview"
+        :loading="previewLoading"
+        :error="previewError"
+        @close="showPreview = false"
+        @render="renderPreview"
+      />
     </div>
-    <!-- Edit Version Stylesheet Modal -->
+
     <div
-      v-if="showVersionStylesheetModal"
+      v-if="showVersionStylesheetModal && editingVersion"
       class="modal-overlay"
       @mousedown="watchClickStart"
       @mouseup="confirmClickEnd"
     >
-      <div class="modal" style="max-width: 420px" @mousedown.stop @mouseup.stop>
-        <div class="modal-header">
-          <h3>Edit Version v{{ editingVersion?.version }} Stylesheet</h3>
-        </div>
-        <div class="modal-body">
-          <div class="form-group">
-            <label class="form-label">Stylesheet</label>
-            <select v-model="editVersionStylesheetId" class="form-select">
-              <option :value="null">No stylesheet</option>
-              <option v-for="ss in stylesheets" :key="ss.id" :value="ss.id">
-                {{ ss.name }}
-              </option>
-            </select>
-          </div>
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-secondary" @click="showVersionStylesheetModal = false">
-            Cancel
-          </button>
-          <button
-            class="btn btn-primary"
-            :disabled="savingVersionStylesheet"
-            @click="saveVersionStylesheet"
-          >
-            {{ savingVersionStylesheet ? "Saving..." : "Save" }}
-          </button>
-        </div>
-      </div>
+      <VersionStylesheetModal
+        v-model:stylesheet-id="editVersionStylesheetId"
+        :version="editingVersion"
+        :stylesheets="stylesheets"
+        :saving="savingVersionStylesheet"
+        @close="showVersionStylesheetModal = false"
+        @save="saveVersionStylesheet"
+      />
     </div>
 
-    <TemplateModal :editing="template" :is-visible="showTemplateEditModal" :saving="savingTemplate" :form="templateForm" @close="closeActiveModal" @save="saveTemplate" />
+    <TemplateModal
+      :editing="template"
+      :is-visible="showTemplateEditModal"
+      :saving="savingTemplate"
+      :form="templateForm"
+      @close="showTemplateEditModal = false"
+      @save="saveTemplate"
+    />
   </div>
 </template>
 
 <style scoped>
-.info-label {
-  font-weight: 600;
-  width: 140px;
-  color: var(--text-secondary);
-}
-
-.template-id {
-  font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-size: 13px;
-  background: var(--bg-tertiary);
-  padding: 2px 8px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-primary);
-  user-select: all;
-}
-
-.btn-copy {
-  background: none;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius);
-  cursor: pointer;
-  padding: 2px 6px;
-  margin-left: 6px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  vertical-align: middle;
-  transition: background 0.15s, color 0.15s;
-}
-
-.btn-copy:hover {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.copied-label {
+.crumb {
+  margin-top: 4px;
   font-size: 12px;
-  color: var(--success-600, #16a34a);
-  margin-left: 6px;
+  color: var(--text-tertiary);
 }
 
-.row-selected {
-  background: var(--bg-tertiary);
+.crumb a {
+  color: var(--text-tertiary);
+  text-decoration: none;
 }
 
-.align-center {
-  align-items: center;
+.crumb a:hover {
+  color: var(--primary-600);
+  text-decoration: underline;
 }
 
-.form-select-sm {
-  padding: 4px 8px;
-  font-size: 13px;
-  max-width: 160px;
+.header-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.preview-section {
-  margin-bottom: 16px;
-}
-
-.preview-label {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
-  margin-bottom: 6px;
-}
-
-.preview-content {
-  padding: 10px 14px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius);
-  font-size: 14px;
-  color: var(--text-primary);
-}
-
-.preview-html {
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.preview-iframe {
-  width: 100%;
-  min-height: 300px;
-  border: none;
-  background: #fff;
-}
-
-.preview-text {
-  padding: 10px 14px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius);
-  font-family: "JetBrains Mono", "Fira Code", monospace;
-  font-size: 13px;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-}
-
-.preview-error {
-  padding: 10px 14px;
-  background: var(--danger-50);
-  color: var(--danger-600);
-  border-radius: var(--radius);
-  font-size: 13px;
-  margin-bottom: 16px;
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 </style>

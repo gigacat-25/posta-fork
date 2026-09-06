@@ -6,6 +6,7 @@ package worker
 import (
 	"encoding/json"
 
+	"github.com/goposta/posta/internal/queues"
 	"github.com/hibiken/asynq"
 )
 
@@ -17,9 +18,9 @@ const (
 	TypeInboundProcess = "inbound:process"
 	TypeMessageProcess = "message:process"
 
-	QueueTransactional = "transactional"
-	QueueBulk          = "bulk"
-	QueueLow           = "low"
+	QueueTransactional = queues.Transactional
+	QueueBulk          = queues.Bulk
+	QueueLow           = queues.Low
 )
 
 type EmailSendPayload struct {

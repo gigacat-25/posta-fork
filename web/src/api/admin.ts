@@ -1,10 +1,50 @@
 import api from './client'
-import type { ApiResponse, PaginatedResponse, User, ApiKey, Email, Event, AdminMetrics, UserDetailMetrics, CronJob, AdminWorkspace, UpdateInfo } from './types'
+import type {
+  ApiResponse, PaginatedResponse, User, ApiKey, Email, Event, AdminMetrics,
+  UserDetailMetrics, CronJob, AdminWorkspace, UpdateInfo,
+  Domain, AdminDomainRow, AdminDomainDetail, AdminDomainVerifyResult,
+} from './types'
+import type { Announcement, AnnouncementInput } from './inbox'
 
 export const adminApi = {
+  // ---- Announcements (platform-wide in-app notices) ----
+  listAnnouncements(page = 0, size = 20) {
+    return api.get<PaginatedResponse<Announcement>>('/admin/announcements', { params: { page, size } })
+  },
+  createAnnouncement(input: AnnouncementInput) {
+    return api.post<ApiResponse<Announcement>>('/admin/announcements', input)
+  },
+  retractAnnouncement(id: number) {
+    return api.delete<ApiResponse<{ message: string }>>(`/admin/announcements/${id}`)
+  },
   listUsers(page = 0, size = 20, search = '') {
     return api.get<PaginatedResponse<User>>('/admin/users', { params: { page, size, search: search || undefined } })
   },
+  // ---- Domains (platform-wide) ----
+  listDomains(page = 0, size = 20, search = '', status = '', workspace = 0) {
+    return api.get<PaginatedResponse<AdminDomainRow>>('/admin/domains', {
+      params: {
+        page,
+        size,
+        search: search || undefined,
+        status: status || undefined,
+        workspace: workspace || undefined,
+      },
+    })
+  },
+  getDomain(id: number) {
+    return api.get<ApiResponse<AdminDomainDetail>>(`/admin/domains/${id}`)
+  },
+  verifyDomain(id: number) {
+    return api.post<ApiResponse<AdminDomainVerifyResult>>(`/admin/domains/${id}/verify`)
+  },
+  setDomainVerification(id: number, ownershipVerified: boolean, reason: string) {
+    return api.put<ApiResponse<Domain>>(`/admin/domains/${id}/verification`, {
+      ownership_verified: ownershipVerified,
+      reason,
+    })
+  },
+
   createUser(name: string, email: string, password: string, role: string) {
     return api.post<ApiResponse<User>>('/admin/users', { name, email, password, role })
   },

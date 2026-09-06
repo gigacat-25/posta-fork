@@ -101,12 +101,16 @@ const routes = [
       { path: 'profile', name: 'profile', component: () => import('../views/auth/Profile.vue'), meta: { title: 'Profile' } },
       { path: 'change-password', redirect: '/profile' },
       // Admin
+      { path: 'notifications', name: 'notifications', component: () => import('../views/Notifications.vue'), meta: { title: 'Notifications' } },
       { path: 'admin/users', name: 'admin-users', component: () => import('../views/admin/Users.vue'), meta: { admin: true, title: 'Admin · Users' } },
       { path: 'admin/users/:id', name: 'admin-user-detail', component: () => import('../views/admin/UserDetail.vue'), meta: { admin: true, title: 'Admin · User' } },
       { path: 'admin/dashboard', name: 'admin-dashboard', component: () => import('../views/admin/Dashboard.vue'), meta: { admin: true, title: 'Admin · Dashboard' } },
       // The page was called Metrics until it grew a health summary and quick
       // links; keep the old path working for bookmarks and muscle memory.
       { path: 'admin/metrics', redirect: '/admin/dashboard' },
+      { path: 'admin/announcements', name: 'admin-announcements', component: () => import('../views/admin/Announcements.vue'), meta: { admin: true, title: 'Admin · Announcements' } },
+      { path: 'admin/domains', name: 'admin-domains', component: () => import('../views/admin/Domains.vue'), meta: { admin: true, title: 'Admin · Domains' } },
+      { path: 'admin/domains/:id', name: 'admin-domain-detail', component: () => import('../views/admin/DomainDetail.vue'), meta: { admin: true, title: 'Admin · Domain' } },
       { path: 'admin/events', name: 'admin-events', component: () => import('../views/admin/Events.vue'), meta: { admin: true, title: 'Admin · Events' } },
       { path: 'admin/events/:id', name: 'admin-event-detail', component: () => import('../views/admin/EventDetail.vue'), meta: { admin: true, title: 'Admin · Event' } },
       { path: 'admin/plans', name: 'admin-plans', component: () => import('../views/admin/Plans.vue'), meta: { admin: true, title: 'Admin · Plans' } },

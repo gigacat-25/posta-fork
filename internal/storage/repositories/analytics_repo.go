@@ -4,9 +4,10 @@
 package repositories
 
 import (
-	"github.com/goposta/posta/internal/models"
+	"sort"
 	"time"
 
+	"github.com/goposta/posta/internal/models"
 	"gorm.io/gorm"
 )
 
@@ -28,47 +29,11 @@ type StatusBreakdown struct {
 	Count  int64  `json:"count"`
 }
 
-// DailyCounts returns email counts per day for a user within a date range, optionally filtered by status.
-func (r *AnalyticsRepository) DailyCounts(userID uint, from, to time.Time, status string) ([]DailyCount, error) {
-	var results []DailyCount
-	query := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COUNT(*) as count").
-		Where("user_id = ? AND workspace_id IS NULL AND created_at >= ? AND created_at <= ?", userID, from, to)
-	if status != "" {
-		query = query.Where("status = ?", status)
-	}
-	err := query.Group("date").Order("date ASC").Find(&results).Error
-	return results, err
-}
-
-// StatusBreakdown returns counts grouped by status for a user within a date range.
-func (r *AnalyticsRepository) StatusBreakdown(userID uint, from, to time.Time) ([]StatusBreakdown, error) {
-	var results []StatusBreakdown
-	err := r.db.Table("emails").
-		Select("status, COUNT(*) as count").
-		Where("user_id = ? AND workspace_id IS NULL AND created_at >= ? AND created_at <= ?", userID, from, to).
-		Group("status").
-		Find(&results).Error
-	return results, err
-}
-
-// HourlyCounts returns email counts per hour for a user on a specific day.
-func (r *AnalyticsRepository) HourlyCounts(userID uint, date time.Time) ([]DailyCount, error) {
-	var results []DailyCount
-	start := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, date.Location())
-	end := start.Add(24 * time.Hour)
-	err := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'HH24:00') as date, COUNT(*) as count").
-		Where("user_id = ? AND created_at >= ? AND created_at < ?", userID, start, end).
-		Group("date").Order("date ASC").Find(&results).Error
-	return results, err
-}
-
 // AdminDailyCounts returns email counts across all users.
 func (r *AnalyticsRepository) AdminDailyCounts(from, to time.Time, status string) ([]DailyCount, error) {
 	var results []DailyCount
 	query := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COUNT(*) as count").
+		Select("TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date, COUNT(*) as count").
 		Where("created_at >= ? AND created_at <= ?", from, to)
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -127,25 +92,11 @@ type LatencyPercentiles struct {
 	Avg float64 `json:"avg"`
 }
 
-// DeliveryRateTrends returns daily delivery rate for a user within a date range.
-func (r *AnalyticsRepository) DeliveryRateTrends(userID uint, from, to time.Time) ([]DeliveryRatePoint, error) {
-	var rows []deliveryRow
-	err := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, status, COUNT(*) as count").
-		Where("user_id = ? AND workspace_id IS NULL AND created_at >= ? AND created_at <= ? AND status IN ?", userID, from, to, []string{string(models.EmailStatusSent), string(models.EmailStatusFailed)}).
-		Group("date, status").Order("date ASC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	return buildDeliveryRatePoints(rows, from, to), nil
-}
-
 // AdminDeliveryRateTrends returns daily delivery rate across all users.
 func (r *AnalyticsRepository) AdminDeliveryRateTrends(from, to time.Time) ([]DeliveryRatePoint, error) {
 	var rows []deliveryRow
 	err := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, status, COUNT(*) as count").
+		Select("TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date, status, COUNT(*) as count").
 		Where("created_at >= ? AND created_at <= ? AND status IN ?", from, to, []string{string(models.EmailStatusSent), string(models.EmailStatusFailed)}).
 		Group("date, status").Order("date ASC").
 		Find(&rows).Error
@@ -155,30 +106,65 @@ func (r *AnalyticsRepository) AdminDeliveryRateTrends(from, to time.Time) ([]Del
 	return buildDeliveryRatePoints(rows, from, to), nil
 }
 
-func buildDeliveryRatePoints(rows []deliveryRow, from, to time.Time) []DeliveryRatePoint {
-	m := make(map[string]*DeliveryRatePoint)
-	start := from.Truncate(24 * time.Hour)
-	end := to.Truncate(24 * time.Hour)
+// utcDay is the UTC calendar day an instant falls on.
+//
+// The series has to be built the same way Postgres buckets the rows, and the
+// queries pin their buckets to UTC with `AT TIME ZONE 'UTC'`. time.Truncate is
+// not a substitute: it rounds against the zero time, so on a server west of UTC
+// it lands on the previous day and the report loses its final day.
+func utcDay(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// dayKeys is the gapless list of UTC day labels covering a range, so a quiet day
+// renders as a zero rather than disappearing from the axis.
+func dayKeys(from, to time.Time) []string {
+	start, end := utcDay(from), utcDay(to)
+	if end.Before(start) {
+		return nil
+	}
+	keys := make([]string, 0, int(end.Sub(start)/(24*time.Hour))+1)
 	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
+		keys = append(keys, d.Format("2006-01-02"))
+	}
+	return keys
+}
+
+// buildDeliveryRatePoints turns grouped rows into a gapless daily series.
+//
+// Rows whose day falls outside the requested range are folded onto the nearest
+// end rather than dropped. That cannot happen while the query and the series
+// agree on UTC, but it used to: when Postgres ran in a non-UTC timezone its
+// buckets drifted past the range and the rows vanished from the report with
+// nothing to show that anything was missing.
+func buildDeliveryRatePoints(rows []deliveryRow, from, to time.Time) []DeliveryRatePoint {
+	keys := dayKeys(from, to)
+	if len(keys) == 0 {
+		return []DeliveryRatePoint{}
+	}
+
+	m := make(map[string]*DeliveryRatePoint, len(keys))
+	for _, key := range keys {
 		m[key] = &DeliveryRatePoint{Date: key}
 	}
-	for _, r := range rows {
-		p, ok := m[r.Date]
+
+	first, last := keys[0], keys[len(keys)-1]
+	for _, row := range rows {
+		p, ok := m[row.Date]
 		if !ok {
-			p = &DeliveryRatePoint{Date: r.Date}
-			m[r.Date] = p
+			p = m[clampKey(row.Date, first, last)]
 		}
-		switch r.Status {
+		switch row.Status {
 		case string(models.EmailStatusSent):
-			p.Sent = r.Count
+			p.Sent += row.Count
 		case string(models.EmailStatusFailed):
-			p.Failed = r.Count
+			p.Failed += row.Count
 		}
 	}
-	result := make([]DeliveryRatePoint, 0, len(m))
-	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
+
+	result := make([]DeliveryRatePoint, 0, len(keys))
+	for _, key := range keys {
 		p := m[key]
 		p.Total = p.Sent + p.Failed
 		if p.Total > 0 {
@@ -189,25 +175,20 @@ func buildDeliveryRatePoints(rows []deliveryRow, from, to time.Time) []DeliveryR
 	return result
 }
 
-// BounceRateTrends returns daily bounce counts by type for a user.
-func (r *AnalyticsRepository) BounceRateTrends(userID uint, from, to time.Time) ([]BounceRatePoint, error) {
-	var rows []bounceRow
-	err := r.db.Table("bounces").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, type, COUNT(*) as count").
-		Where("user_id = ? AND workspace_id IS NULL AND created_at >= ? AND created_at <= ?", userID, from, to).
-		Group("date, type").Order("date ASC").
-		Find(&rows).Error
-	if err != nil {
-		return nil, err
+// clampKey picks the end of the series an out-of-range day belongs to. Keys are
+// zero-padded ISO dates, so they compare correctly as strings.
+func clampKey(key, first, last string) string {
+	if key < first {
+		return first
 	}
-	return buildBounceRatePoints(rows, from, to), nil
+	return last
 }
 
 // AdminBounceRateTrends returns daily bounce counts by type across all users.
 func (r *AnalyticsRepository) AdminBounceRateTrends(from, to time.Time) ([]BounceRatePoint, error) {
 	var rows []bounceRow
 	err := r.db.Table("bounces").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, type, COUNT(*) as count").
+		Select("TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date, type, COUNT(*) as count").
 		Where("created_at >= ? AND created_at <= ?", from, to).
 		Group("date, type").Order("date ASC").
 		Find(&rows).Error
@@ -218,52 +199,39 @@ func (r *AnalyticsRepository) AdminBounceRateTrends(from, to time.Time) ([]Bounc
 }
 
 func buildBounceRatePoints(rows []bounceRow, from, to time.Time) []BounceRatePoint {
-	m := make(map[string]*BounceRatePoint)
-	start := from.Truncate(24 * time.Hour)
-	end := to.Truncate(24 * time.Hour)
-	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
+	keys := dayKeys(from, to)
+	if len(keys) == 0 {
+		return []BounceRatePoint{}
+	}
+
+	m := make(map[string]*BounceRatePoint, len(keys))
+	for _, key := range keys {
 		m[key] = &BounceRatePoint{Date: key}
 	}
-	for _, r := range rows {
-		p, ok := m[r.Date]
+
+	first, last := keys[0], keys[len(keys)-1]
+	for _, row := range rows {
+		p, ok := m[row.Date]
 		if !ok {
-			p = &BounceRatePoint{Date: r.Date}
-			m[r.Date] = p
+			p = m[clampKey(row.Date, first, last)]
 		}
-		switch r.Type {
+		switch row.Type {
 		case "hard":
-			p.Hard = r.Count
+			p.Hard += row.Count
 		case "soft":
-			p.Soft = r.Count
+			p.Soft += row.Count
 		case "complaint":
-			p.Complaint = r.Count
+			p.Complaint += row.Count
 		}
 	}
-	result := make([]BounceRatePoint, 0, len(m))
-	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
+
+	result := make([]BounceRatePoint, 0, len(keys))
+	for _, key := range keys {
 		p := m[key]
 		p.Total = p.Hard + p.Soft + p.Complaint
 		result = append(result, *p)
 	}
 	return result
-}
-
-// LatencyPercentilesForUser returns delivery latency percentiles for a user.
-func (r *AnalyticsRepository) LatencyPercentilesForUser(userID uint, from, to time.Time) (*LatencyPercentiles, error) {
-	var result LatencyPercentiles
-	err := r.db.Table("emails").
-		Select(`
-			COALESCE(PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (sent_at - created_at))), 0) as p50,
-			COALESCE(PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (sent_at - created_at))), 0) as p75,
-			COALESCE(PERCENTILE_CONT(0.90) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (sent_at - created_at))), 0) as p90,
-			COALESCE(PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (sent_at - created_at))), 0) as p99,
-			COALESCE(AVG(EXTRACT(EPOCH FROM (sent_at - created_at))), 0) as avg
-		`).
-		Where("user_id = ? AND workspace_id IS NULL AND status = 'sent' AND sent_at IS NOT NULL AND created_at >= ? AND created_at <= ?", userID, from, to).
-		Scan(&result).Error
-	return &result, err
 }
 
 // AdminLatencyPercentiles returns delivery latency percentiles across all users.
@@ -285,7 +253,7 @@ func (r *AnalyticsRepository) AdminLatencyPercentiles(from, to time.Time) (*Late
 func (r *AnalyticsRepository) WorkspaceDailyCounts(workspaceID uint, from, to time.Time, status string) ([]DailyCount, error) {
 	var results []DailyCount
 	query := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, COUNT(*) as count").
+		Select("TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date, COUNT(*) as count").
 		Where("workspace_id = ? AND created_at >= ? AND created_at <= ?", workspaceID, from, to)
 	if status != "" {
 		query = query.Where("status = ?", status)
@@ -307,7 +275,7 @@ func (r *AnalyticsRepository) WorkspaceStatusBreakdown(workspaceID uint, from, t
 func (r *AnalyticsRepository) WorkspaceDeliveryRateTrends(workspaceID uint, from, to time.Time) ([]DeliveryRatePoint, error) {
 	var rows []deliveryRow
 	err := r.db.Table("emails").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, status, COUNT(*) as count").
+		Select("TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date, status, COUNT(*) as count").
 		Where("workspace_id = ? AND created_at >= ? AND created_at <= ? AND status IN ?", workspaceID, from, to, []string{string(models.EmailStatusSent), string(models.EmailStatusFailed)}).
 		Group("date, status").Order("date ASC").
 		Find(&rows).Error
@@ -320,7 +288,7 @@ func (r *AnalyticsRepository) WorkspaceDeliveryRateTrends(workspaceID uint, from
 func (r *AnalyticsRepository) WorkspaceBounceRateTrends(workspaceID uint, from, to time.Time) ([]BounceRatePoint, error) {
 	var rows []bounceRow
 	err := r.db.Table("bounces").
-		Select("TO_CHAR(created_at, 'YYYY-MM-DD') as date, type, COUNT(*) as count").
+		Select("TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date, type, COUNT(*) as count").
 		Where("workspace_id = ? AND created_at >= ? AND created_at <= ?", workspaceID, from, to).
 		Group("date, type").Order("date ASC").
 		Find(&rows).Error
@@ -347,10 +315,14 @@ func (r *AnalyticsRepository) WorkspaceLatencyPercentiles(workspaceID uint, from
 
 // ProviderBreakdownPoint represents delivery counts bucketed by recipient mailbox provider.
 type ProviderBreakdownPoint struct {
-	Provider     string  `json:"provider"`
-	Sent         int64   `json:"sent"`
-	Failed       int64   `json:"failed"`
-	Bounced      int64   `json:"bounced"`
+	Provider string `json:"provider"`
+	Sent     int64  `json:"sent"`
+	Failed   int64  `json:"failed"`
+	// Suppressed counts sends Posta blocked before they left, because every
+	// recipient was on the suppression list. It was previously reported as
+	// "bounced", which it is not: nothing was ever handed to the provider, so it
+	// says nothing about how that provider treats your mail.
+	Suppressed   int64   `json:"suppressed"`
 	Total        int64   `json:"total"`
 	DeliveryRate float64 `json:"delivery_rate"`
 }
@@ -372,18 +344,6 @@ func (r *AnalyticsRepository) queryProviderRows(where string, args []any) ([]pro
 		Group("provider, status").
 		Scan(&rows).Error
 	return rows, err
-}
-
-// ProviderBreakdown returns delivery counts bucketed by mailbox provider for a user.
-func (r *AnalyticsRepository) ProviderBreakdown(userID uint, from, to time.Time) ([]ProviderBreakdownPoint, error) {
-	rows, err := r.queryProviderRows(
-		"user_id = ? AND workspace_id IS NULL AND created_at >= ? AND created_at <= ?",
-		[]any{userID, from, to},
-	)
-	if err != nil {
-		return nil, err
-	}
-	return buildProviderBreakdown(rows), nil
 }
 
 // WorkspaceProviderBreakdown returns delivery counts by provider for a workspace.
@@ -424,7 +384,7 @@ func buildProviderBreakdown(rows []providerRow) []ProviderBreakdownPoint {
 		case "failed":
 			p.Failed += row.Count
 		case "suppressed":
-			p.Bounced += row.Count
+			p.Suppressed += row.Count
 		}
 		p.Total += row.Count
 	}
@@ -436,11 +396,14 @@ func buildProviderBreakdown(rows []providerRow) []ProviderBreakdownPoint {
 		}
 		out = append(out, *p)
 	}
-	// Sort by total volume desc for stable rendering.
-	for i := 1; i < len(out); i++ {
-		for j := i; j > 0 && out[j].Total > out[j-1].Total; j-- {
-			out[j], out[j-1] = out[j-1], out[j]
+	// Highest volume first, then by name so equal volumes do not reorder between
+	// requests — map iteration order is random, and a table that reshuffles on
+	// every refresh is hard to read.
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
 		}
-	}
+		return out[i].Provider < out[j].Provider
+	})
 	return out
 }

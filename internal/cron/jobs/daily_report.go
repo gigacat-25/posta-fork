@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 
 	"github.com/goposta/posta/internal/cron"
+	"github.com/goposta/posta/internal/queues"
 	"github.com/goposta/posta/internal/storage/repositories"
 	"github.com/hibiken/asynq"
 	"github.com/jkaninda/logger"
@@ -50,7 +51,7 @@ func (j *DailyReportJob) Run(_ context.Context, client *asynq.Client) error {
 
 	enqueued := 0
 	for _, ws := range workspaces {
-		if err := cron.EnqueueJob(client, &dailyReportTask{workspaceID: ws.ID}, asynq.Queue("low")); err != nil {
+		if err := cron.EnqueueJob(client, &dailyReportTask{workspaceID: ws.ID}, asynq.Queue(queues.Low)); err != nil {
 			logger.Error("daily report: failed to enqueue", "workspace_id", ws.ID, "error", err)
 			continue
 		}

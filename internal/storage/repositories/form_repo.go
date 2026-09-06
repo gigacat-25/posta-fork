@@ -8,6 +8,7 @@ import (
 
 	"github.com/goposta/posta/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type FormRepository struct {
@@ -23,7 +24,7 @@ func (r *FormRepository) Create(f *models.Form) error {
 }
 
 func (r *FormRepository) Update(f *models.Form) error {
-	return r.db.Save(f).Error
+	return r.db.Omit(clause.Associations).Save(f).Error
 }
 
 func (r *FormRepository) FindByID(id uint) (*models.Form, error) {

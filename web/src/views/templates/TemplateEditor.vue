@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, shallowRef } from 'vue'
+import { ref, onMounted, onBeforeUnmount, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { templatesApi } from '../../api/templates'
 import type {
@@ -9,10 +9,14 @@ import type {
   TemplatePreview,
 } from '../../api/types'
 import { useNotificationStore } from '../../stores/notification'
+import { useThemeStore } from '../../stores/theme'
+import { useConfirm } from '../../composables/useConfirm'
+import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
+import { apiMessage } from '../../composables/apiError'
 
 // CodeMirror
 import { EditorView, placeholder as cmPlaceholder } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
+import { Compartment, EditorState } from '@codemirror/state'
 import { html } from '@codemirror/lang-html'
 import { json } from '@codemirror/lang-json'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -21,6 +25,8 @@ import { basicSetup } from 'codemirror'
 const route = useRoute()
 const router = useRouter()
 const notify = useNotificationStore()
+const theme = useThemeStore()
+const { confirm } = useConfirm()
 
 const templateId = Number(route.params.id)
 const versionId = Number(route.params.versionId)
@@ -79,8 +85,12 @@ function createEditor(
   if (lang === 'json') extensions.push(json())
   if (placeholderText) extensions.push(cmPlaceholder(placeholderText))
 
-  // Always use dark theme for code editors — looks better for code
-  extensions.push(oneDark)
+  // Follow the app's theme. A permanently dark editor on a light page reads as
+  // a foreign widget, and the surrounding chrome already answers the question of
+  // which theme the user wants. A compartment keeps it swappable, so toggling
+  // the theme restyles the editor in place instead of stranding it until you
+  // navigate away and back.
+  extensions.push(themeCompartment.of(theme.isDark ? oneDark : []))
   extensions.push(editorTheme)
 
   const state = EditorState.create({
@@ -90,6 +100,8 @@ function createEditor(
 
   return new EditorView({ state, parent: container })
 }
+
+const themeCompartment = new Compartment()
 
 const editorTheme = EditorView.theme({
   '&': {
@@ -198,6 +210,16 @@ function initEditors() {
   }
 }
 
+watch(
+  () => theme.isDark,
+  (dark) => {
+    const next = themeCompartment.reconfigure(dark ? oneDark : [])
+    for (const view of [htmlEditor.value, textEditor.value, subjectEditor.value, sampleDataEditor.value]) {
+      view?.dispatch({ effects: next })
+    }
+  },
+)
+
 function destroyEditors() {
   htmlEditor.value?.destroy()
   textEditor.value?.destroy()
@@ -210,12 +232,12 @@ onMounted(async () => {
 
   try {
     const [tmplRes, versionsRes, locsRes] = await Promise.all([
-      templatesApi.list(0, 100),
+      templatesApi.get(templateId),
       templatesApi.listVersions(templateId),
       templatesApi.listLocalizations(templateId, versionId),
     ])
 
-    template.value = tmplRes.data.data.find((t: Template) => t.id === templateId) || null
+    template.value = tmplRes.data.data || null
     version.value = (versionsRes.data.data || []).find((v: TemplateVersion) => v.id === versionId) || null
 
     const locs: TemplateLocalization[] = locsRes.data.data || []
@@ -245,11 +267,21 @@ onMounted(async () => {
       initEditors()
       renderPreview()
     }, 0)
-  } catch {
-    notify.error('Failed to load template data')
+  } catch (e: any) {
+    notify.error(apiMessage(e, 'Failed to load template data'))
     loading.value = false
   }
 })
+
+useUnsavedChanges(hasChanges, (message) =>
+  confirm({
+    title: 'Unsaved changes',
+    message,
+    confirmText: 'Discard changes',
+    cancelText: 'Keep editing',
+    variant: 'warning',
+  }),
+)
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)

@@ -15,7 +15,7 @@ COPY web/ .
 RUN npm run build
 
 # Go build stage
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 
 ARG VERSION=dev
 ARG COMMIT=unknown
@@ -45,7 +45,7 @@ ARG COMMIT=unknown
 
 LABEL org.opencontainers.image.title="posta" \
       org.opencontainers.image.description="Posta is a self-hosted email delivery platform" \
-      org.opencontainers.image.licenses="Apache" \
+      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.authors="Jonas Kaninda" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.source="https://github.com/goposta/posta" \
@@ -57,9 +57,13 @@ RUN apk add --no-cache ca-certificates tzdata \
 # Single self-contained binary: the dashboard is embedded, so there are no
 # static files to copy and no POSTA_WEB_DIR to set.
 COPY --from=builder /bin/posta /bin/posta
-RUN ln -s /bin/posta /posta
+COPY docker/healthcheck.sh /usr/local/bin/posta-healthcheck
+RUN ln -s /bin/posta /posta && chmod +x /usr/local/bin/posta-healthcheck
 
 USER posta
 EXPOSE 9000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/usr/local/bin/posta-healthcheck"]
 
 ENTRYPOINT ["/bin/posta"]

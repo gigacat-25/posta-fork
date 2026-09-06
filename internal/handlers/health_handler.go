@@ -4,15 +4,13 @@
 package handlers
 
 import (
-	"context"
-	"time"
+	"net/http"
 
+	"github.com/goposta/posta/internal/health"
 	"github.com/jkaninda/okapi"
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
-
-const statusNotReady = "not ready"
 
 type HealthHandler struct {
 	db    *gorm.DB
@@ -27,47 +25,20 @@ type HealthResponse struct {
 	Status string `json:"status" example:"ok"`
 }
 
-type ReadyResponse struct {
-	Status   string `json:"status" example:"ready"`
-	Database string `json:"database" example:"ok"`
-	Redis    string `json:"redis" example:"ok"`
-}
+// ReadyResponse is the shared readiness payload, so a probe pointed at a server
+// and one pointed at a dedicated worker read the same.
+type ReadyResponse = health.Status
 
 // Healthz is a lightweight liveness probe.
 func (h *HealthHandler) Healthz(c *okapi.Context) error {
-	return c.OK(HealthResponse{Status: "ok"})
+	return c.OK(HealthResponse{Status: health.StatusOK})
 }
 
 // Readyz checks that all dependencies are reachable.
 func (h *HealthHandler) Readyz(c *okapi.Context) error {
-	resp := ReadyResponse{
-		Status:   "ready",
-		Database: "ok",
-		Redis:    "ok",
+	status := health.Check(c.Request().Context(), h.db, h.redis)
+	if !status.Ready() {
+		return c.JSON(http.StatusServiceUnavailable, status)
 	}
-
-	sqlDB, err := h.db.DB()
-	if err != nil {
-		resp.Status = statusNotReady
-		resp.Database = err.Error()
-	} else {
-		ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
-		defer cancel()
-		if err := sqlDB.PingContext(ctx); err != nil {
-			resp.Status = statusNotReady
-			resp.Database = err.Error()
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
-	defer cancel()
-	if err := h.redis.Ping(ctx).Err(); err != nil {
-		resp.Status = statusNotReady
-		resp.Redis = err.Error()
-	}
-
-	if resp.Status != "ready" {
-		return c.JSON(503, resp)
-	}
-	return c.OK(resp)
+	return c.OK(status)
 }

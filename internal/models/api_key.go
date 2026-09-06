@@ -46,7 +46,7 @@ type APIKey struct {
 	Scopes      pq.StringArray `json:"scopes" gorm:"type:text[]"`
 
 	User      User      `json:"-" gorm:"foreignKey:UserID"`
-	CreatedBy *ActorRef `json:"created_by,omitempty" gorm:"foreignKey:UserID;references:ID;constraint:false"`
+	CreatedBy *ActorRef `json:"created_by,omitempty" gorm:"->;foreignKey:UserID;references:ID;constraint:false"`
 }
 
 // HasScope reports whether the key grants scope s. An empty scope set means the

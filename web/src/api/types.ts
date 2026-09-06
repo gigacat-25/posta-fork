@@ -168,6 +168,11 @@ export interface SMTPCredentialCreateResponse {
   message: string
 }
 
+/** A template as the list returns it: the record plus the languages it is translated into. */
+export interface TemplateListItem extends Template {
+  languages: string[]
+}
+
 export interface ActorRef {
   id: number
   name: string
@@ -411,6 +416,48 @@ export interface DnsRecord {
   value: string
 }
 
+// ---- Admin domains (platform-wide) ----
+
+export interface AdminDomainRow {
+  id: number
+  domain: string
+  workspace_id?: number | null
+  workspace_name: string
+  owner_id: number
+  owner_email: string
+  ownership_verified: boolean
+  spf_verified: boolean
+  dkim_verified: boolean
+  dmarc_verified: boolean
+  fully_verified: boolean
+  created_at: string
+}
+
+export interface AdminDomainDetail extends AdminDomainRow {
+  verification_token: string
+  records: DnsRecords | null
+  /** Set when a different workspace already holds this name verified. */
+  conflict_workspace_id?: number | null
+  conflict_workspace_name?: string
+}
+
+export interface AdminDomainVerifyResult {
+  domain: Domain
+  verification: {
+    ownership_verified: boolean
+    spf_verified: boolean
+    dkim_verified: boolean
+    dmarc_verified: boolean
+    spf_record?: string
+    dkim_record?: string
+    dmarc_record?: string
+  }
+  fully_verified: boolean
+  /** Set when DNS passed but another workspace already holds the name verified. */
+  conflict_workspace_id?: number | null
+  conflict_workspace_name?: string
+}
+
 export interface Webhook {
   id: number
   user_id: number
@@ -652,7 +699,8 @@ export interface ProviderBreakdownPoint {
   provider: string
   sent: number
   failed: number
-  bounced: number
+  /** Blocked before sending because every recipient was suppressed. Not a bounce. */
+  suppressed: number
   total: number
   delivery_rate: number
 }

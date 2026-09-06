@@ -78,6 +78,8 @@ New-user registration is toggled at runtime from **Admin → Settings** (the `re
 | `POSTA_EMBEDDED_WORKER` | `false` | Run the worker within the API server process |
 | `POSTA_WORKER_CONCURRENCY` | `10` | Number of worker goroutines |
 | `POSTA_WORKER_MAX_RETRIES` | `5` | Maximum retry attempts per email |
+| `POSTA_WORKER_HEALTH_ENABLED` | `true` | Serve `/healthz`, `/readyz` and `/metrics` from a dedicated worker |
+| `POSTA_WORKER_HEALTH_PORT` | `POSTA_PORT` | Port for those endpoints. Server and worker run as separate containers, so sharing the number is safe and means one health check for both |
 
 ## Webhooks
 

@@ -66,6 +66,16 @@ type Config struct {
 	EmbeddedWorker    bool
 	WorkerConcurrency int
 	WorkerMaxRetries  int
+	// WorkerHealthEnabled and WorkerHealthPort control the probe and metrics
+	// listener a dedicated worker exposes. It is on by default: a worker with no
+	// probes cannot be health-checked by an orchestrator, which is the reason
+	// the listener exists.
+	//
+	// The port defaults to POSTA_PORT, the same one the server uses. Server and
+	// worker run as separate containers, so there is nothing to collide with,
+	// and one port means one health check command and one EXPOSE for both.
+	WorkerHealthEnabled bool
+	WorkerHealthPort    int
 
 	// AutoSuppressOnReject adds a recipient to the suppression list when an
 	// outbound send is permanently rejected (5xx at RCPT TO, e.g. 550 user
@@ -230,6 +240,9 @@ func New() *Config {
 	if err := godotenv.Load(); err != nil {
 		logger.Debug("no .env file found, using environment variables")
 	}
+	// Resolved first so the worker's probe listener can default to it.
+	port := goutils.EnvInt("POSTA_PORT", 9000)
+
 	return &Config{
 		Database: DatabaseConfig{
 			host:     goutils.Env("POSTA_DB_HOST", "localhost"),
@@ -241,7 +254,7 @@ func New() *Config {
 			url:      goutils.Env("POSTA_DB_URL", ""),
 		},
 		Redis:                newRedisConfig(),
-		Port:                 goutils.EnvInt("POSTA_PORT", 9000),
+		Port:                 port,
 		Env:                  goutils.Env("POSTA_ENV", "production"),
 		JWTSecret:            goutils.Env("POSTA_JWT_SECRET", "change-me-in-production"),
 		DevMode:              goutils.EnvBool("POSTA_DEV_MODE", false),
@@ -271,6 +284,8 @@ func New() *Config {
 		EmbeddedWorker:       goutils.EnvBool("POSTA_EMBEDDED_WORKER", false),
 		WorkerConcurrency:    goutils.EnvInt("POSTA_WORKER_CONCURRENCY", 10),
 		WorkerMaxRetries:     goutils.EnvInt("POSTA_WORKER_MAX_RETRIES", 5),
+		WorkerHealthEnabled:  goutils.EnvBool("POSTA_WORKER_HEALTH_ENABLED", true),
+		WorkerHealthPort:     goutils.EnvInt("POSTA_WORKER_HEALTH_PORT", port),
 		AutoSuppressOnReject: goutils.EnvBool("POSTA_AUTO_SUPPRESS_ON_REJECT", true),
 
 		WebhookMaxRetries:  goutils.EnvInt("POSTA_WEBHOOK_MAX_RETRIES", 3),

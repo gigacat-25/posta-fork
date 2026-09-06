@@ -577,6 +577,7 @@ func initCronManager(
 			producer,
 		))
 	}
+	retentionJob.SetNotificationRepo(repositories.NewNotificationRepository(db))
 	if cfg.MessagesEnabled {
 		retentionJob.SetMessageRepo(repositories.NewMessageRepository(db))
 		manager.Register(jobs.NewMessageDigestJob(

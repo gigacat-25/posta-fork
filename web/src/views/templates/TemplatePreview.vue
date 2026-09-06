@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { templatesApi } from '../../api/templates'
 import type { Template, TemplatePreview, TemplateLocalization, TemplateVersion } from '../../api/types'
 import { useNotificationStore } from '../../stores/notification'
+import { apiMessage } from '../../composables/apiError'
 
 const route = useRoute()
 const router = useRouter()
@@ -23,10 +24,27 @@ const allTemplates = ref<Template[]>([])
 const search = ref('')
 const searchOpen = ref(false)
 
-const searchResults = computed<Template[]>(() => {
-  const q = search.value.trim().toLowerCase()
-  if (!q) return allTemplates.value.slice(0, 10)
-  return allTemplates.value.filter(t => t.name.toLowerCase().includes(q)).slice(0, 20)
+const searchResults = computed<Template[]>(() => allTemplates.value)
+const searching = ref(false)
+
+// The picker asks the server, so it can reach past the first page of templates.
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+async function runSearch(term: string) {
+  searching.value = true
+  try {
+    const res = await templatesApi.list(0, 20, term.trim())
+    allTemplates.value = res.data.data
+  } catch {
+    allTemplates.value = []
+  } finally {
+    searching.value = false
+  }
+}
+
+watch(search, (term) => {
+  if (!searchOpen.value) return
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => runSearch(term), 250)
 })
 
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
@@ -51,11 +69,7 @@ async function loadTemplate(id: number) {
   preview.value = null
 
   try {
-    if (allTemplates.value.length === 0) {
-      const res = await templatesApi.list(0, 100)
-      allTemplates.value = res.data.data
-    }
-    template.value = allTemplates.value.find((t: Template) => t.id === id) || null
+    template.value = (await templatesApi.get(id)).data.data || null
 
     if (!template.value) {
       notify.error('Template not found')
@@ -79,8 +93,8 @@ async function loadTemplate(id: number) {
     }
 
     await renderPreview()
-  } catch {
-    notify.error('Failed to load template')
+  } catch (e: any) {
+    notify.error(apiMessage(e, 'Failed to load template'))
   } finally {
     loading.value = false
   }
@@ -90,6 +104,13 @@ function selectTemplate(t: Template) {
   searchOpen.value = false
   if (t.id === template.value?.id) return
   router.push(`/templates/${t.id}/preview`)
+}
+
+function onSearchFocus() {
+  searchOpen.value = true
+  // The field holds the current template's name; opening it should offer the
+  // alternatives, not one result matching what is already on screen.
+  runSearch('')
 }
 
 function onSearchBlur() {
@@ -120,7 +141,7 @@ async function renderPreview() {
     )
     preview.value = res.data.data
   } catch (e: any) {
-    previewError.value = e.response?.data?.error?.message || 'Failed to render template'
+    previewError.value = apiMessage(e, 'Failed to render template')
   } finally {
     previewLoading.value = false
   }
@@ -150,7 +171,7 @@ function formatDate(dateStr: string): string {
         type="text"
         class="form-input"
         placeholder="Search templates by name..."
-        @focus="searchOpen = true"
+        @focus="onSearchFocus"
         @blur="onSearchBlur"
       />
       <div v-if="searchOpen && searchResults.length > 0" class="template-search-results">
@@ -165,6 +186,9 @@ function formatDate(dateStr: string): string {
           <span class="template-search-name">{{ t.name }}</span>
           <span v-if="t.description" class="template-search-desc">{{ t.description }}</span>
         </button>
+      </div>
+      <div v-else-if="searchOpen && searching" class="template-search-results template-search-empty">
+        Searching…
       </div>
       <div v-else-if="searchOpen && search.trim()" class="template-search-results template-search-empty">
         No templates match "{{ search }}"

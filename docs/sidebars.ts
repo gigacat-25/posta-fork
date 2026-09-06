@@ -12,6 +12,7 @@ const sidebars: SidebarsConfig = {
         'getting-started/installation',
         'getting-started/configuration',
         'getting-started/quickstart',
+        'getting-started/architecture',
       ],
     },
     {

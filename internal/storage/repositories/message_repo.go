@@ -9,6 +9,7 @@ import (
 
 	"github.com/goposta/posta/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type MessageFilterQuery struct {
@@ -35,7 +36,7 @@ func (r *MessageRepository) Create(m *models.Message) error {
 }
 
 func (r *MessageRepository) Update(m *models.Message) error {
-	return r.db.Save(m).Error
+	return r.db.Omit(clause.Associations).Save(m).Error
 }
 
 func (r *MessageRepository) FindByID(id uint) (*models.Message, error) {

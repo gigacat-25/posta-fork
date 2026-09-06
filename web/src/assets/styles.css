@@ -24,6 +24,18 @@
   --danger-50: #fef2f2;
   --danger-500: #ef4444;
   --danger-600: #dc2626;
+
+  /* Semantic colours for text on a surface. The -500/-600 ramp is tuned for
+     fills and borders, where it works in both themes; as small text several of
+     its steps fall below WCAG AA (success-600 is 3.3:1 on white, warning-600
+     3.19:1). These are the same meanings picked for legibility instead, and
+     they are redefined per theme. */
+  --success-text: #15803d;
+  --warning-text: #b45309;
+  /* red-700 rather than -600: the -600 clears AA on white at 4.83:1 but only
+     reaches 4.41:1 on the tinted danger surface these messages usually sit on. */
+  --danger-text: #b91c1c;
+  --info-text: #9333ea;
   --danger-700: #b91c1c;
 
   /* Semantic tokens */
@@ -105,7 +117,12 @@
   --danger-50: #2d0f0f;
   --primary-50: #1e0d30;
 
-  --checkmark-color: #d8b4fe
+  --checkmark-color: #d8b4fe;
+
+  --success-text: #22c55e;
+  --warning-text: #f59e0b;
+  --danger-text: #f87171;
+  --info-text: #c084fc;
 }
 
 /* ─── Shared tokens ─── */

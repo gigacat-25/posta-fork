@@ -8,6 +8,9 @@ import type {
   TemplateLocalization,
 } from '../../api/types'
 import { useNotificationStore } from '../../stores/notification'
+import { useConfirm } from '../../composables/useConfirm'
+import { useUnsavedChanges } from '../../composables/useUnsavedChanges'
+import { apiMessage } from '../../composables/apiError'
 import grapesjs from 'grapesjs'
 import type { Editor } from 'grapesjs'
 import 'grapesjs/dist/css/grapes.min.css'
@@ -16,6 +19,7 @@ import grapesjsNewsletter from 'grapesjs-preset-newsletter'
 const route = useRoute()
 const router = useRouter()
 const notify = useNotificationStore()
+const { confirm } = useConfirm()
 
 const templateId = Number(route.params.id)
 const versionId = Number(route.params.versionId)
@@ -161,11 +165,21 @@ onMounted(async () => {
 
     // Initialize GrapesJS after DOM renders
     setTimeout(() => initGrapesJS(), 0)
-  } catch {
-    notify.error('Failed to load template data')
+  } catch (e: any) {
+    notify.error(apiMessage(e, 'Failed to load template data'))
     loading.value = false
   }
 })
+
+useUnsavedChanges(hasChanges, (message) =>
+  confirm({
+    title: 'Unsaved design',
+    message,
+    confirmText: 'Discard changes',
+    cancelText: 'Keep editing',
+    variant: 'warning',
+  }),
+)
 
 onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)

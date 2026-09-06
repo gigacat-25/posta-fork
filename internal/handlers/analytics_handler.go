@@ -4,6 +4,7 @@
 package handlers
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/goposta/posta/internal/services/cache"
@@ -57,25 +58,19 @@ func (h *AnalyticsHandler) UserAnalytics(c *okapi.Context, req *AnalyticsRequest
 		return ok(c, resp)
 	}
 
-	from, to := parseTimeRange(req.From, req.To)
-
-	var daily []repositories.DailyCount
-	var breakdown []repositories.StatusBreakdown
-	var err error
-
-	if scope.WorkspaceID != nil {
-		daily, err = h.repo.WorkspaceDailyCounts(*scope.WorkspaceID, from, to, req.Status)
-		if err != nil {
-			return c.AbortInternalServerError("failed to fetch analytics")
-		}
-		breakdown, err = h.repo.WorkspaceStatusBreakdown(*scope.WorkspaceID, from, to)
-	} else {
-		daily, err = h.repo.DailyCounts(scope.UserID, from, to, req.Status)
-		if err != nil {
-			return c.AbortInternalServerError("failed to fetch analytics")
-		}
-		breakdown, err = h.repo.StatusBreakdown(scope.UserID, from, to)
+	if scope.WorkspaceID == nil {
+		return c.AbortBadRequest("no active workspace")
 	}
+	from, to, err := parseTimeRange(req.From, req.To)
+	if err != nil {
+		return c.AbortBadRequest(err.Error())
+	}
+
+	daily, err := h.repo.WorkspaceDailyCounts(*scope.WorkspaceID, from, to, req.Status)
+	if err != nil {
+		return c.AbortInternalServerError("failed to fetch analytics")
+	}
+	breakdown, err := h.repo.WorkspaceStatusBreakdown(*scope.WorkspaceID, from, to)
 	if err != nil {
 		return c.AbortInternalServerError("failed to fetch analytics")
 	}
@@ -100,7 +95,10 @@ func (h *AnalyticsHandler) AdminAnalytics(c *okapi.Context, req *AnalyticsReques
 		return ok(c, resp)
 	}
 
-	from, to := parseTimeRange(req.From, req.To)
+	from, to, err := parseTimeRange(req.From, req.To)
+	if err != nil {
+		return c.AbortBadRequest(err.Error())
+	}
 
 	daily, err := h.repo.AdminDailyCounts(from, to, req.Status)
 	if err != nil {
@@ -135,34 +133,23 @@ func (h *AnalyticsHandler) UserDashboardAnalytics(c *okapi.Context, req *Dashboa
 		return ok(c, resp)
 	}
 
-	from, to := parseTimeRange(req.From, req.To)
-
-	var delivery []repositories.DeliveryRatePoint
-	var bouncePoints []repositories.BounceRatePoint
-	var latency *repositories.LatencyPercentiles
-	var err error
-
-	if scope.WorkspaceID != nil {
-		delivery, err = h.repo.WorkspaceDeliveryRateTrends(*scope.WorkspaceID, from, to)
-		if err != nil {
-			return c.AbortInternalServerError("failed to fetch delivery rate trends")
-		}
-		bouncePoints, err = h.repo.WorkspaceBounceRateTrends(*scope.WorkspaceID, from, to)
-		if err != nil {
-			return c.AbortInternalServerError("failed to fetch bounce rate trends")
-		}
-		latency, err = h.repo.WorkspaceLatencyPercentiles(*scope.WorkspaceID, from, to)
-	} else {
-		delivery, err = h.repo.DeliveryRateTrends(scope.UserID, from, to)
-		if err != nil {
-			return c.AbortInternalServerError("failed to fetch delivery rate trends")
-		}
-		bouncePoints, err = h.repo.BounceRateTrends(scope.UserID, from, to)
-		if err != nil {
-			return c.AbortInternalServerError("failed to fetch bounce rate trends")
-		}
-		latency, err = h.repo.LatencyPercentilesForUser(scope.UserID, from, to)
+	if scope.WorkspaceID == nil {
+		return c.AbortBadRequest("no active workspace")
 	}
+	from, to, err := parseTimeRange(req.From, req.To)
+	if err != nil {
+		return c.AbortBadRequest(err.Error())
+	}
+
+	delivery, err := h.repo.WorkspaceDeliveryRateTrends(*scope.WorkspaceID, from, to)
+	if err != nil {
+		return c.AbortInternalServerError("failed to fetch delivery rate trends")
+	}
+	bouncePoints, err := h.repo.WorkspaceBounceRateTrends(*scope.WorkspaceID, from, to)
+	if err != nil {
+		return c.AbortInternalServerError("failed to fetch bounce rate trends")
+	}
+	latency, err := h.repo.WorkspaceLatencyPercentiles(*scope.WorkspaceID, from, to)
 	if err != nil {
 		return c.AbortInternalServerError("failed to fetch latency percentiles")
 	}
@@ -202,15 +189,15 @@ func (h *AnalyticsHandler) UserProviderBreakdown(c *okapi.Context, req *Provider
 		return ok(c, resp)
 	}
 
-	from, to := parseTimeRange(req.From, req.To)
-
-	var rows []repositories.ProviderBreakdownPoint
-	var err error
-	if scope.WorkspaceID != nil {
-		rows, err = h.repo.WorkspaceProviderBreakdown(*scope.WorkspaceID, from, to)
-	} else {
-		rows, err = h.repo.ProviderBreakdown(scope.UserID, from, to)
+	if scope.WorkspaceID == nil {
+		return c.AbortBadRequest("no active workspace")
 	}
+	from, to, err := parseTimeRange(req.From, req.To)
+	if err != nil {
+		return c.AbortBadRequest(err.Error())
+	}
+
+	rows, err := h.repo.WorkspaceProviderBreakdown(*scope.WorkspaceID, from, to)
 	if err != nil {
 		return c.AbortInternalServerError("failed to fetch provider breakdown")
 	}
@@ -230,7 +217,10 @@ func (h *AnalyticsHandler) AdminProviderBreakdown(c *okapi.Context, req *Provide
 		return ok(c, resp)
 	}
 
-	from, to := parseTimeRange(req.From, req.To)
+	from, to, err := parseTimeRange(req.From, req.To)
+	if err != nil {
+		return c.AbortBadRequest(err.Error())
+	}
 	rows, err := h.repo.AdminProviderBreakdown(from, to)
 	if err != nil {
 		return c.AbortInternalServerError("failed to fetch provider breakdown")
@@ -250,7 +240,10 @@ func (h *AnalyticsHandler) AdminDashboardAnalytics(c *okapi.Context, req *Dashbo
 		return ok(c, resp)
 	}
 
-	from, to := parseTimeRange(req.From, req.To)
+	from, to, err := parseTimeRange(req.From, req.To)
+	if err != nil {
+		return c.AbortBadRequest(err.Error())
+	}
 
 	delivery, err := h.repo.AdminDeliveryRateTrends(from, to)
 	if err != nil {
@@ -275,19 +268,64 @@ func (h *AnalyticsHandler) AdminDashboardAnalytics(c *okapi.Context, req *Dashbo
 	return ok(c, resp)
 }
 
-func parseTimeRange(fromStr, toStr string) (time.Time, time.Time) {
-	to := time.Now()
-	from := to.AddDate(0, 0, -30) // default: last 30 days
+// maxAnalyticsRangeDays caps how far a single report may reach. The series is
+// materialised one entry per day in memory and in the response, so without a cap
+// a caller asking for 1970..2099 would have the server build a 47,000-point
+// array per chart.
+const maxAnalyticsRangeDays = 400
+
+// parseTimeRange resolves the requested window to a UTC half-open-ish range:
+// midnight on the from date through the last instant of the to date.
+//
+// Everything is UTC on purpose. The queries bucket rows with
+// `AT TIME ZONE 'UTC'`, so the boundaries have to agree or the first and last
+// day of a report would be cut at the wrong hour.
+func parseTimeRange(fromStr, toStr string) (time.Time, time.Time, error) {
+	now := time.Now().UTC()
+	to := endOfUTCDay(now)
+	from := startOfUTCDay(now.AddDate(0, 0, -defaultAnalyticsRangeDays+1))
 
 	if fromStr != "" {
-		if t, err := time.Parse("2006-01-02", fromStr); err == nil {
-			from = t
+		t, err := time.ParseInLocation("2006-01-02", fromStr, time.UTC)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("from must be a date like 2026-01-31")
 		}
+		from = startOfUTCDay(t)
 	}
 	if toStr != "" {
-		if t, err := time.Parse("2006-01-02", toStr); err == nil {
-			to = t.Add(24*time.Hour - time.Second) // end of day
+		t, err := time.ParseInLocation("2006-01-02", toStr, time.UTC)
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("to must be a date like 2026-01-31")
 		}
+		to = endOfUTCDay(t)
 	}
-	return from, to
+
+	if to.Before(from) {
+		return time.Time{}, time.Time{}, fmt.Errorf("from must not be later than to")
+	}
+	// Counted on the calendar, not by dividing the duration: `to` is the last
+	// instant of its day, and Duration.Hours() is a float64 that rounds
+	// 9599h59m59.999999999s up to exactly 9600, which put the count a day over
+	// and rejected ranges that sat exactly on the cap.
+	if days := int(startOfUTCDay(to).Sub(from)/(24*time.Hour)) + 1; days > maxAnalyticsRangeDays {
+		return time.Time{}, time.Time{}, fmt.Errorf(
+			"the range covers %d days; %d is the maximum", days, maxAnalyticsRangeDays)
+	}
+
+	return from, to, nil
+}
+
+const defaultAnalyticsRangeDays = 30
+
+func startOfUTCDay(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+}
+
+// endOfUTCDay is the last representable instant of the day, so a range stated
+// inclusively really does include everything sent that day. The previous
+// implementation stopped a second early and quietly dropped anything accepted in
+// the final second.
+func endOfUTCDay(t time.Time) time.Time {
+	return startOfUTCDay(t).AddDate(0, 0, 1).Add(-time.Nanosecond)
 }

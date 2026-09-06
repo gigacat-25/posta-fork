@@ -4,6 +4,8 @@
 package repositories
 
 import (
+	"strings"
+
 	"github.com/goposta/posta/internal/models"
 	"gorm.io/gorm"
 )
@@ -89,9 +91,46 @@ func (r *DomainRepository) FindByScope(scope ResourceScope, limit, offset int) (
 	return items, total, nil
 }
 
-// FindVerifiedByName returns an ownership-verified Domain row matching the given name,
-// regardless of the owning user. Used for routing inbound email to the right tenant.
-// Returns gorm.ErrRecordNotFound if no verified domain matches.
+type AdminDomainFilter struct {
+	Search      string
+	Verified    *bool
+	WorkspaceID *uint
+}
+
+func (r *DomainRepository) FindAllFiltered(f AdminDomainFilter, limit, offset int) ([]models.Domain, int64, error) {
+	var items []models.Domain
+	var total int64
+
+	apply := func(q *gorm.DB) *gorm.DB {
+		if s := strings.TrimSpace(f.Search); s != "" {
+			q = q.Where("LOWER(domain) LIKE ?", "%"+strings.ToLower(s)+"%")
+		}
+		if f.Verified != nil {
+			q = q.Where("ownership_verified = ?", *f.Verified)
+		}
+		if f.WorkspaceID != nil {
+			q = q.Where("workspace_id = ?", *f.WorkspaceID)
+		}
+		return q
+	}
+
+	apply(r.db.Model(&models.Domain{})).Count(&total)
+
+	if err := apply(r.db).
+		Order("created_at DESC").
+		Limit(limit).Offset(offset).
+		Find(&items).Error; err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func (r *DomainRepository) CountAll() (total, verified int64) {
+	r.db.Model(&models.Domain{}).Count(&total)
+	r.db.Model(&models.Domain{}).Where("ownership_verified = ?", true).Count(&verified)
+	return
+}
+
 func (r *DomainRepository) FindVerifiedByName(domainName string) (*models.Domain, error) {
 	var d models.Domain
 	if err := r.db.Where("LOWER(domain) = LOWER(?) AND ownership_verified = ?", domainName, true).

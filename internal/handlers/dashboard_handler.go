@@ -8,7 +8,9 @@ import (
 
 	"github.com/goposta/posta/internal/models"
 	"github.com/goposta/posta/internal/services/cache"
+	"github.com/goposta/posta/internal/services/inbox"
 	"github.com/goposta/posta/internal/storage/repositories"
+	"github.com/jkaninda/logger"
 	"github.com/jkaninda/okapi"
 	"gorm.io/gorm"
 )
@@ -18,6 +20,7 @@ type DashboardHandler struct {
 	cache          *cache.Cache
 	whDeliveryRepo *repositories.WebhookDeliveryRepository
 	features       DashboardFeatures
+	inbox          *inbox.Service
 }
 
 type DashboardFeatures struct {
@@ -76,6 +79,40 @@ func NewDashboardHandler(db *gorm.DB, c *cache.Cache, whDeliveryRepo *repositori
 }
 
 func (h *DashboardHandler) SetFeatures(f DashboardFeatures) { h.features = f }
+
+// SetInbox wires the in-app inbox so the dashboard read can reconcile the
+// workspace's health alerts. It is optional: without it the dashboard still
+// works, it just stops maintaining the banner.
+func (h *DashboardHandler) SetInbox(s *inbox.Service) { h.inbox = s }
+
+// syncInbox reconciles the health alerts for the requesting member against the
+// snapshot that was just computed.
+//
+// It runs only when the stats were computed fresh, not on a cache hit, so the
+// banner is exactly as current as the numbers printed above it and the write
+// happens at most once per cache window. A failure here is not the user's
+// problem: the dashboard is still correct without the banner.
+func (h *DashboardHandler) syncInbox(c *okapi.Context, scope repositories.ResourceScope, stats *DashboardStats) {
+	if h.inbox == nil || scope.WorkspaceID == nil {
+		return
+	}
+	role := workspaceRole(c)
+	if role == "" {
+		return
+	}
+	snap := inbox.Snapshot{
+		UnverifiedDomains: stats.UnverifiedDomains,
+		ExpiringAPIKeys:   stats.ExpiringAPIKeys,
+		UnreadMessages:    stats.UnreadMessages,
+		TotalEmails:       stats.TotalEmails,
+		BounceRate:        stats.BounceRate,
+		FailureRate:       stats.FailureRate,
+		MessagesEnabled:   h.features.Messages,
+	}
+	if err := h.inbox.SyncWorkspaceHealth(scope.UserID, *scope.WorkspaceID, role, snap); err != nil {
+		logger.Warn("dashboard: failed to sync inbox alerts", "error", err, "workspace_id", *scope.WorkspaceID)
+	}
+}
 
 func (h *DashboardHandler) Stats(c *okapi.Context) error {
 	scope := getScope(c)
@@ -202,6 +239,8 @@ func (h *DashboardHandler) Stats(c *okapi.Context) error {
 
 	// Store in cache
 	h.cache.Set(ctx, cacheKey, stats, cache.DashboardStatsTTL)
+
+	h.syncInbox(c, scope, &stats)
 
 	return ok(c, stats)
 }

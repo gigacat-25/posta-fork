@@ -1,5 +1,5 @@
 ---
-sidebar_position: 2
+sidebar_position: 1
 title: Installation
 description: Deploy Posta with Docker Compose or from source
 ---
