@@ -35,6 +35,7 @@ type DNSRecords struct {
 type DNSRecord struct {
 	Type  string `json:"type"`
 	Host  string `json:"host"`
+	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
@@ -44,21 +45,25 @@ func RequiredRecords(d *models.Domain) *DNSRecords {
 		Verification: DNSRecord{
 			Type:  recordTypeTXT,
 			Host:  d.Domain,
+			Name:  d.Domain,
 			Value: "posta-verification=" + d.VerificationToken,
 		},
 		SPF: DNSRecord{
 			Type:  recordTypeTXT,
 			Host:  d.Domain,
+			Name:  d.Domain,
 			Value: "v=spf1 include:_spf.posta ~all",
 		},
 		DKIM: DNSRecord{
 			Type:  "CNAME",
 			Host:  "posta._domainkey." + d.Domain,
+			Name:  "posta._domainkey." + d.Domain,
 			Value: "posta._domainkey.posta",
 		},
 		DMARC: DNSRecord{
 			Type:  recordTypeTXT,
 			Host:  "_dmarc." + d.Domain,
+			Name:  "_dmarc." + d.Domain,
 			Value: "v=DMARC1; p=none; rua=mailto:dmarc@" + d.Domain,
 		},
 	}

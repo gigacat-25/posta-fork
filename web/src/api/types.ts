@@ -413,6 +413,7 @@ export interface DnsRecords {
 export interface DnsRecord {
   type: string
   name: string
+  host?: string
   value: string
 }
 

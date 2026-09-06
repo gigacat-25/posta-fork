@@ -59,11 +59,16 @@ const recordDescriptions: Record<RecordKey, { label: string; description: string
 const recordRows = computed<RecordRow[]>(() => {
   const d = dnsRecordsDomain.value
   if (!d || !d.dns_records) return []
+  const normalize = (rec?: DnsRecord): DnsRecord => {
+    if (!rec) return { type: '', name: '', value: '' }
+    const hostVal = rec.name || rec.host || ''
+    return { ...rec, name: hostVal, host: hostVal }
+  }
   return [
-    { key: 'verification', ...recordDescriptions.verification, record: d.dns_records.verification, verified: !!d.ownership_verified },
-    { key: 'spf', ...recordDescriptions.spf, record: d.dns_records.spf, verified: !!d.spf_verified },
-    { key: 'dkim', ...recordDescriptions.dkim, record: d.dns_records.dkim, verified: !!d.dkim_verified },
-    { key: 'dmarc', ...recordDescriptions.dmarc, record: d.dns_records.dmarc, verified: !!d.dmarc_verified },
+    { key: 'verification', ...recordDescriptions.verification, record: normalize(d.dns_records.verification), verified: !!d.ownership_verified },
+    { key: 'spf', ...recordDescriptions.spf, record: normalize(d.dns_records.spf), verified: !!d.spf_verified },
+    { key: 'dkim', ...recordDescriptions.dkim, record: normalize(d.dns_records.dkim), verified: !!d.dkim_verified },
+    { key: 'dmarc', ...recordDescriptions.dmarc, record: normalize(d.dns_records.dmarc), verified: !!d.dmarc_verified },
   ]
 })
 
