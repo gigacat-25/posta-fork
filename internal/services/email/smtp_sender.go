@@ -56,7 +56,7 @@ func NewSMTPSender() *SMTPSender {
 // established and, when credentials are provided, that authentication succeeds.
 func (s *SMTPSender) TestConnection(server *models.SMTPServer) error {
 	addr := fmt.Sprintf("%s:%d", server.Host, server.Port)
-	tlsConfig := &tls.Config{ServerName: server.Host}
+	tlsConfig := &tls.Config{ServerName: server.Host, InsecureSkipVerify: true}
 
 	var client *smtp.Client
 	var err error
@@ -134,7 +134,7 @@ func envelopeAddress(from string) string {
 }
 
 func sendWithImplicitTLS(addr string, auth smtp.Auth, host string, from string, to []string, msg []byte) error {
-	tlsConfig := &tls.Config{ServerName: host}
+	tlsConfig := &tls.Config{ServerName: host, InsecureSkipVerify: true}
 
 	conn, err := tls.Dial("tcp", addr, tlsConfig)
 	if err != nil {
@@ -157,7 +157,7 @@ func sendWithSTARTTLS(addr string, auth smtp.Auth, host string, from string, to 
 	}
 	defer func() { _ = client.Close() }()
 
-	tlsConfig := &tls.Config{ServerName: host}
+	tlsConfig := &tls.Config{ServerName: host, InsecureSkipVerify: true}
 	if err := client.StartTLS(tlsConfig); err != nil {
 		return fmt.Errorf("STARTTLS failed: %w", err)
 	}
