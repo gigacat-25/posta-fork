@@ -14,7 +14,9 @@ import (
 	"net/smtp"
 	"net/textproto"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/goposta/posta/internal/models"
 )
 
@@ -249,7 +251,24 @@ func buildMessage(from string, to []string, subject, htmlBody, textBody string, 
 	fmt.Fprintf(&b, "From: %s\r\n", from)
 	fmt.Fprintf(&b, "To: %s\r\n", strings.Join(to, ", "))
 	fmt.Fprintf(&b, "Subject: %s\r\n", mime.QEncoding.Encode("UTF-8", subject))
+	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
 	b.WriteString("MIME-Version: 1.0\r\n")
+
+	hasMsgID := false
+	for key := range headers {
+		if strings.EqualFold(key, "Message-ID") {
+			hasMsgID = true
+			break
+		}
+	}
+	if !hasMsgID {
+		fromAddr := envelopeAddress(from)
+		domain := "localhost"
+		if parts := strings.Split(fromAddr, "@"); len(parts) == 2 && parts[1] != "" {
+			domain = parts[1]
+		}
+		fmt.Fprintf(&b, "Message-ID: <%s@%s>\r\n", uuid.NewString(), domain)
+	}
 
 	// RFC 2369 / 8058 List-Unsubscribe. Emit mailto first, then the https URL.
 	var luParts []string
