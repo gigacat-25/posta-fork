@@ -26,6 +26,8 @@ services:
         condition: service_healthy
       posta-redis:
         condition: service_healthy
+      smtp:
+        condition: service_started
     restart: unless-stopped
 
   worker:
@@ -45,6 +47,23 @@ services:
         condition: service_healthy
       posta-redis:
         condition: service_healthy
+      smtp:
+        condition: service_started
+    restart: unless-stopped
+
+  smtp:
+    image: boky/postfix
+    container_name: posta-smtp
+    environment:
+      POSTFIX_myhostname: "mail.thescene.co.in"
+      POSTFIX_mydomain: "thescene.co.in"
+      POSTFIX_custom_user: "posta:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
+      ALLOWED_NETWORKS: "172.16.0.0/12 10.0.0.0/8 127.0.0.0/8 192.168.0.0/16"
+    ports:
+      - "587:587"
+      - "25:25"
+    volumes:
+      - smtp_data:/var/spool/postfix
     restart: unless-stopped
 
   posta-db:
@@ -74,3 +93,4 @@ services:
 volumes:
   db_data:
   redis_data:
+  smtp_data:
