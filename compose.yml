@@ -71,7 +71,11 @@ services:
       ALLOW_EMPTY_SENDER_DOMAINS: "true"
       ALLOWED_SENDER_DOMAINS: "${ALLOWED_SENDER_DOMAINS:-${MAIL_DOMAIN:-localhost}}"
       POSTFIX_always_add_missing_headers: "yes"
-      SMTPD_SASL_USERS: "${POSTFIX_SMTP_USER:-posta}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!},${POSTFIX_SMTP_USER:-posta}@${MAIL_DOMAIN:-localhost}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
+      POSTFIX_smtpd_tls_security_level: "may"
+      POSTFIX_smtpd_sasl_auth_enable: "yes"
+      POSTFIX_smtpd_sasl_security_options: "noanonymous"
+      POSTFIX_broken_sasl_auth_clients: "yes"
+      SMTPD_SASL_USERS: "${POSTFIX_SMTP_USER:-posta}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!},${POSTFIX_SMTP_USER:-posta}@${MAIL_DOMAIN:-localhost}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!},${POSTFIX_SMTP_USER:-posta}@${MAIL_HOSTNAME:-mail.${MAIL_DOMAIN:-localhost}}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
       ALLOWED_NETWORKS: "172.16.0.0/12,10.0.0.0/8,127.0.0.0/8,192.168.0.0/16"
     ports:
       - "587:587"

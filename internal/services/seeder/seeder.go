@@ -9,11 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goposta/posta/internal/config"
 	"github.com/goposta/posta/internal/models"
+	"github.com/goposta/posta/internal/services/workspace"
 	"github.com/goposta/posta/internal/storage/repositories"
 	goutils "github.com/jkaninda/go-utils"
 	"github.com/jkaninda/logger"
 	"github.com/jkaninda/okapi"
+	"gorm.io/gorm"
 )
 
 type Seeder struct {
@@ -22,6 +25,13 @@ type Seeder struct {
 	versionRepo      *repositories.TemplateVersionRepository
 	localizationRepo *repositories.TemplateLocalizationRepository
 	languageRepo     *repositories.LanguageRepository
+	db               *gorm.DB
+	systemSMTP       config.SystemSMTPConfig
+}
+
+func (s *Seeder) SetSystemSMTP(db *gorm.DB, cfg config.SystemSMTPConfig) {
+	s.db = db
+	s.systemSMTP = cfg
 }
 
 func New(
@@ -172,6 +182,13 @@ func (s *Seeder) SeedWorkspaceDefaults(workspaceID, userID uint, userName string
 		}
 		if err := s.languageRepo.Create(lang); err != nil {
 			logger.Error("failed to seed language", "user_id", userID, "code", dl.Code, "error", err)
+		}
+	}
+
+	// Auto-provision default SMTP server if configured
+	if s.db != nil && s.systemSMTP.IsConfigured() {
+		if err := workspace.EnsureWorkspaceDefaultSMTP(s.db, workspaceID, userID, s.systemSMTP); err != nil {
+			logger.Error("failed to seed default SMTP server into workspace", "workspace_id", workspaceID, "error", err)
 		}
 	}
 

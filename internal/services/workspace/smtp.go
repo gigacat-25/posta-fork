@@ -173,3 +173,85 @@ func ParseSender(from string) (name, addr string, err error) {
 	}
 	return "", from, nil
 }
+
+// EnsureWorkspaceDefaultSMTP provisions or updates the default SMTP server for a given workspace.
+// If an SMTP server with host == cfg.Host already exists (even if marked invalid), it updates it to enabled.
+// If the workspace has no enabled SMTP server, it creates one with status: enabled.
+func EnsureWorkspaceDefaultSMTP(db *gorm.DB, workspaceID, ownerID uint, cfg config.SystemSMTPConfig) error {
+	if !cfg.IsConfigured() {
+		return nil
+	}
+
+	var existing models.SMTPServer
+	err := db.Where("workspace_id = ? AND host = ?", workspaceID, cfg.Host).Order("id ASC").First(&existing).Error
+	if err == nil {
+		updates := map[string]any{
+			"status":           models.SMTPStatusEnabled,
+			"validation_error": "",
+			"port":             cfg.Port,
+			"username":         cfg.Username,
+			"encryption":       NormalizeEncryption(cfg.Encryption),
+		}
+		if cfg.Password != "" {
+			enc, err := crypto.Encrypt(cfg.Password)
+			if err == nil {
+				updates["password"] = enc
+			}
+		}
+		if err := db.Model(&models.SMTPServer{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
+			return fmt.Errorf("sync default SMTP server for workspace %d: %w", workspaceID, err)
+		}
+		logger.Info("workspace: synced default SMTP server", "workspace_id", workspaceID, "smtp_id", existing.ID)
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	// If workspace already has another enabled SMTP server, do not overwrite
+	var count int64
+	if err := db.Model(&models.SMTPServer{}).
+		Where("workspace_id = ? AND status = ?", workspaceID, models.SMTPStatusEnabled).
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	server := &models.SMTPServer{
+		UserID:        ownerID,
+		WorkspaceID:   &workspaceID,
+		Name:          SystemSMTPServerName,
+		Host:          cfg.Host,
+		Port:          cfg.Port,
+		Username:      cfg.Username,
+		Password:      cfg.Password,
+		Encryption:    NormalizeEncryption(cfg.Encryption),
+		Status:        models.SMTPStatusEnabled,
+		MaxRetries:    3,
+		AllowedEmails: []string{},
+	}
+	if err := db.Create(server).Error; err != nil {
+		return fmt.Errorf("provision default SMTP for workspace %d: %w", workspaceID, err)
+	}
+	logger.Info("workspace: auto-provisioned default SMTP server",
+		"workspace_id", workspaceID, "host", server.Host, "port", server.Port)
+	return nil
+}
+
+// EnsureAllWorkspacesDefaultSMTP ensures all non-system workspaces have the default SMTP server provisioned and enabled.
+func EnsureAllWorkspacesDefaultSMTP(db *gorm.DB, cfg config.SystemSMTPConfig) error {
+	if !cfg.IsConfigured() {
+		return nil
+	}
+	var workspaces []models.Workspace
+	if err := db.Where("system = ?", false).Find(&workspaces).Error; err != nil {
+		return err
+	}
+	for _, ws := range workspaces {
+		if err := EnsureWorkspaceDefaultSMTP(db, ws.ID, ws.OwnerID, cfg); err != nil {
+			logger.Error("failed to ensure default SMTP for workspace", "workspace_id", ws.ID, "error", err)
+		}
+	}
+	return nil
+}

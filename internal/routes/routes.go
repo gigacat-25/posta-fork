@@ -206,6 +206,7 @@ func InitRoutes(app *okapi.Okapi, db *gorm.DB, redisClient *redis.Client, cfg *c
 
 	// Handlers
 	userSeeder := seeder.New(templateRepo, stylesheetRepo, versionRepo, localizationRepo, languageRepo)
+	userSeeder.SetSystemSMTP(db, cfg.SystemSMTP)
 
 	migrator := workspaceprovision.New(cfg.PlanEnforcement)
 	migrator.SetSeeder(userSeeder)
