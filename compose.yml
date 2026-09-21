@@ -4,17 +4,21 @@ services:
       context: .
       dockerfile: docker/Dockerfile
     ports:
-      - "9000:9000"
+      - "${POSTA_PORT:-9000}:9000"
     environment:
-      POSTA_DB_URL: "host=posta-db user=posta password=posta dbname=posta port=5432 sslmode=disable"
+      POSTA_DB_URL: "host=posta-db user=${POSTA_DB_USER:-posta} password=${POSTA_DB_PASSWORD:-posta} dbname=${POSTA_DB_NAME:-posta} port=5432 sslmode=disable"
       POSTA_REDIS_ADDR: "posta-redis:6379"
-      # Local quick start only. Production rejects the placeholder credentials
-      # below, so this file declares itself dev; see examples/ for a deployable
-      # template that requires real secrets.
-      POSTA_ENV: "dev"
-      POSTA_JWT_SECRET: "change-me-in-production"
-      POSTA_ADMIN_EMAIL: "admin@example.com"
-      POSTA_ADMIN_PASSWORD: "admin1234"
+      POSTA_ENV: "${POSTA_ENV:-production}"
+      POSTA_JWT_SECRET: "${POSTA_JWT_SECRET:?POSTA_JWT_SECRET is required}"
+      POSTA_ADMIN_EMAIL: "${POSTA_ADMIN_EMAIL:?POSTA_ADMIN_EMAIL is required}"
+      POSTA_ADMIN_PASSWORD: "${POSTA_ADMIN_PASSWORD:?POSTA_ADMIN_PASSWORD is required}"
+      # System SMTP Configuration (auto-provisions and links Postfix SMTP on startup)
+      POSTA_SYSTEM_SMTP_HOST: "smtp"
+      POSTA_SYSTEM_SMTP_PORT: 587
+      POSTA_SYSTEM_SMTP_USERNAME: "${POSTFIX_SMTP_USER:-posta}"
+      POSTA_SYSTEM_SMTP_PASSWORD: "${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
+      POSTA_SYSTEM_SMTP_FROM: "${POSTA_DEFAULT_FROM:-notifications@${MAIL_DOMAIN:-localhost}}"
+      POSTA_SYSTEM_SMTP_ENCRYPTION: "starttls"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9000/healthz"]
       interval: 30s
@@ -36,12 +40,19 @@ services:
       dockerfile: docker/Dockerfile
     command: ["worker"]
     environment:
-      POSTA_DB_URL: "host=posta-db user=posta password=posta dbname=posta port=5432 sslmode=disable"
+      POSTA_DB_URL: "host=posta-db user=${POSTA_DB_USER:-posta} password=${POSTA_DB_PASSWORD:-posta} dbname=${POSTA_DB_NAME:-posta} port=5432 sslmode=disable"
       POSTA_REDIS_ADDR: "posta-redis:6379"
-      POSTA_ENV: "dev"
-      POSTA_JWT_SECRET: "change-me-in-production"
-      POSTA_WORKER_CONCURRENCY: "10"
-      POSTA_WORKER_MAX_RETRIES: "5"
+      POSTA_ENV: "${POSTA_ENV:-production}"
+      POSTA_JWT_SECRET: "${POSTA_JWT_SECRET:?POSTA_JWT_SECRET is required}"
+      POSTA_WORKER_CONCURRENCY: "${POSTA_WORKER_CONCURRENCY:-10}"
+      POSTA_WORKER_MAX_RETRIES: "${POSTA_WORKER_MAX_RETRIES:-5}"
+      # System SMTP Configuration
+      POSTA_SYSTEM_SMTP_HOST: "smtp"
+      POSTA_SYSTEM_SMTP_PORT: 587
+      POSTA_SYSTEM_SMTP_USERNAME: "${POSTFIX_SMTP_USER:-posta}"
+      POSTA_SYSTEM_SMTP_PASSWORD: "${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
+      POSTA_SYSTEM_SMTP_FROM: "${POSTA_DEFAULT_FROM:-notifications@${MAIL_DOMAIN:-localhost}}"
+      POSTA_SYSTEM_SMTP_ENCRYPTION: "starttls"
     depends_on:
       posta-db:
         condition: service_healthy
@@ -55,12 +66,12 @@ services:
     image: boky/postfix
     container_name: posta-smtp
     environment:
-      POSTFIX_myhostname: "mail.thescene.co.in"
-      POSTFIX_mydomain: "thescene.co.in"
+      POSTFIX_myhostname: "${MAIL_HOSTNAME:-mail.${MAIL_DOMAIN:-localhost}}"
+      POSTFIX_mydomain: "${MAIL_DOMAIN:-localhost}"
       ALLOW_EMPTY_SENDER_DOMAINS: "true"
-      ALLOWED_SENDER_DOMAINS: "thescene.co.in"
+      ALLOWED_SENDER_DOMAINS: "${ALLOWED_SENDER_DOMAINS:-${MAIL_DOMAIN:-localhost}}"
       POSTFIX_always_add_missing_headers: "yes"
-      SMTPD_SASL_USERS: "posta:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!},posta@thescene.co.in:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
+      SMTPD_SASL_USERS: "${POSTFIX_SMTP_USER:-posta}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!},${POSTFIX_SMTP_USER:-posta}@${MAIL_DOMAIN:-localhost}:${POSTFIX_SMTP_PASSWORD:-PostaSmtpPass2026!}"
       ALLOWED_NETWORKS: "172.16.0.0/12,10.0.0.0/8,127.0.0.0/8,192.168.0.0/16"
     ports:
       - "587:587"
@@ -72,13 +83,13 @@ services:
   posta-db:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: posta
-      POSTGRES_PASSWORD: posta
-      POSTGRES_DB: posta
+      POSTGRES_USER: "${POSTA_DB_USER:-posta}"
+      POSTGRES_PASSWORD: "${POSTA_DB_PASSWORD:-posta}"
+      POSTGRES_DB: "${POSTA_DB_NAME:-posta}"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U posta"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTA_DB_USER:-posta}"]
       interval: 5s
       timeout: 5s
       retries: 5

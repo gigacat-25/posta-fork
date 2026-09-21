@@ -1,4 +1,4 @@
-.PHONY: build build-ui build-all run run-worker dev dev-worker dev-deps test vet fmt lint clean
+.PHONY: build build-ui build-all run run-worker dev dev-worker dev-deps test vet fmt lint clean up down logs deploy deploy-local
 
 BINARY := posta
 BUILD_DIR := bin
@@ -74,3 +74,18 @@ tidy:
 
 lint:
 	golangci-lint run
+
+up: ## Start all services in the background (Posta, Worker, DB, Redis, SMTP)
+	docker compose up -d --build
+
+down: ## Stop all services
+	docker compose down
+
+logs: ## Tail container logs
+	docker compose logs -f
+
+deploy: ## Deploy to remote server specified in .env
+	python execution/deploy.py --remote
+
+deploy-local: ## Deploy locally and verify health
+	python execution/deploy.py --local
